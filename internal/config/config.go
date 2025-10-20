@@ -274,15 +274,15 @@ func (t ToolLs) Limits() (depth, items int) {
 
 // Config holds the configuration for crush.
 type Config struct {
-	Schema string `json:"$schema,omitempty"`
+	Schema string `json:"$schema,omitempty"` // 驱动，给到的是crush的地址
 
 	// We currently only support large/small as values here.
-	Models map[SelectedModelType]SelectedModel `json:"models,omitempty" jsonschema:"description=Model configurations for different model types,example={\"large\":{\"model\":\"gpt-4o\",\"provider\":\"openai\"}}"`
+	Models map[SelectedModelType]SelectedModel `json:"models,omitempty" jsonschema:"description=Model configurations for different model types,example={\"large\":{\"model\":\"gpt-4o\",\"provider\":\"openai\"}}"` // 我们支持使用的模型
 
 	// The providers that are configured
 	Providers *csync.Map[string, ProviderConfig] `json:"providers,omitempty" jsonschema:"description=AI provider configurations"`
 
-	MCP MCPs `json:"mcp,omitempty" jsonschema:"description=Model Context Protocol server configurations"`
+	MCP MCPs `json:"mcp,omitempty" jsonschema:"description=Model Context Protocol server configurations"` // 模型上下文协议
 
 	LSP LSPs `json:"lsp,omitempty" jsonschema:"description=Language Server Protocol configurations"`
 
