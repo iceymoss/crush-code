@@ -13,8 +13,8 @@ import (
 )
 
 type CreateMessageParams struct {
-	Role     MessageRole
-	Parts    []ContentPart
+	Role     MessageRole   // 角色
+	Parts    []ContentPart //
 	Model    string
 	Provider string
 }

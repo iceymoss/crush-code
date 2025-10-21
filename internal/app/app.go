@@ -50,8 +50,15 @@ type App struct {
 // New initializes a new applcation instance.
 func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	q := db.New(conn)
+
+	// 将db连接保存在会话中使用
+	// 创建会话
 	sessions := session.NewService(q)
+
+	// 创建消息
 	messages := message.NewService(q)
+
+	//
 	files := history.NewService(q, conn)
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
 	allowedTools := []string{}

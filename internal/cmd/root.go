@@ -154,6 +154,7 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	ctx := cmd.Context()
 
+	// 读取当前项目目录
 	cwd, err := ResolveCwd(cmd)
 	if err != nil {
 		return nil, err
