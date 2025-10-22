@@ -13,8 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// ErrorPermissionDenied 无权限error
 var ErrorPermissionDenied = errors.New("permission denied")
 
+// CreatePermissionRequest 创建权限请求
 type CreatePermissionRequest struct {
 	SessionID   string `json:"session_id"`
 	ToolCallID  string `json:"tool_call_id"`
@@ -25,12 +27,14 @@ type CreatePermissionRequest struct {
 	Path        string `json:"path"`
 }
 
+// PermissionNotification 权限通知
 type PermissionNotification struct {
 	ToolCallID string `json:"tool_call_id"`
 	Granted    bool   `json:"granted"`
 	Denied     bool   `json:"denied"`
 }
 
+// PermissionRequest 权限请求
 type PermissionRequest struct {
 	ID          string `json:"id"`
 	SessionID   string `json:"session_id"`
@@ -44,14 +48,14 @@ type PermissionRequest struct {
 
 type Service interface {
 	pubsub.Suscriber[PermissionRequest]
-	GrantPersistent(permission PermissionRequest)
-	Grant(permission PermissionRequest)
-	Deny(permission PermissionRequest)
-	Request(opts CreatePermissionRequest) bool
-	AutoApproveSession(sessionID string)
-	SetSkipRequests(skip bool)
-	SkipRequests() bool
-	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification]
+	GrantPersistent(permission PermissionRequest)                                           // 持久授权
+	Grant(permission PermissionRequest)                                                     // 授权
+	Deny(permission PermissionRequest)                                                      // 拒绝
+	Request(opts CreatePermissionRequest) bool                                              // 请求授权
+	AutoApproveSession(sessionID string)                                                    // 自动授权会话
+	SetSkipRequests(skip bool)                                                              // 设置是否跳过请求
+	SkipRequests() bool                                                                     // 是否跳过请求
+	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification] // 订阅通知，监听是否订阅的channel
 }
 
 type permissionService struct {
@@ -220,6 +224,7 @@ func (s *permissionService) SkipRequests() bool {
 	return s.skip
 }
 
+// NewPermissionService 实例化权限服务，workingDir传入工作目录，skip是否跳过权限，allowedTools授权的工具
 func NewPermissionService(workingDir string, skip bool, allowedTools []string) Service {
 	return &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),

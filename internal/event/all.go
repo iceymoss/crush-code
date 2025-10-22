@@ -4,14 +4,18 @@ import (
 	"time"
 )
 
+// appStartTime app开始时间
 var appStartTime time.Time
 
 func AppInitialized() {
 	appStartTime = time.Now()
+
+	// 发送事件, 通知app初始化完成
 	send("app initialized")
 }
 
 func AppExited() {
+	// 发送事件, 统计app运行时间
 	duration := time.Since(appStartTime).Truncate(time.Second)
 	send(
 		"app exited",

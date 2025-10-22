@@ -26,46 +26,52 @@ import (
 )
 
 type App struct {
-	Sessions    session.Service
-	Messages    message.Service
-	History     history.Service
-	Permissions permission.Service
+	Sessions    session.Service    // 会话管理
+	Messages    message.Service    // 消息管理
+	History     history.Service    // 历史管理
+	Permissions permission.Service // 权限管理
 
-	CoderAgent agent.Service
+	CoderAgent agent.Service // ai agent 管理
 
-	LSPClients *csync.Map[string, *lsp.Client]
+	LSPClients *csync.Map[string, *lsp.Client] // 语言服务协议：主要用于处理代码规范性，代码提示等等
 
-	config *config.Config
+	config *config.Config // 配置
 
-	serviceEventsWG *sync.WaitGroup
-	eventsCtx       context.Context
-	events          chan tea.Msg
-	tuiWG           *sync.WaitGroup
+	serviceEventsWG *sync.WaitGroup // 服务所有事件同步
+	eventsCtx       context.Context // 事件处理的上下文
+	events          chan tea.Msg    // 事件消息同步通道
+	tuiWG           *sync.WaitGroup // 终端界面同步
 
 	// global context and cleanup functions
-	globalCtx    context.Context
-	cleanupFuncs []func() error
+	globalCtx    context.Context // 全局上下文
+	cleanupFuncs []func() error  // 清理功能
 }
 
 // New initializes a new applcation instance.
 func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
+	// 创建db
 	q := db.New(conn)
 
 	// 将db连接保存在会话中使用
 	// 创建会话
 	sessions := session.NewService(q)
 
-	// 创建消息
+	// 创建消息管理
 	messages := message.NewService(q)
 
-	//
+	// 创建历史管理
 	files := history.NewService(q, conn)
+
+	// 是否跳过权限直接请求
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
+
+	// 授权的工具
 	allowedTools := []string{}
 	if cfg.Permissions != nil && cfg.Permissions.AllowedTools != nil {
 		allowedTools = cfg.Permissions.AllowedTools
 	}
 
+	// 实例化app管理对象
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
@@ -82,6 +88,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		tuiWG:           &sync.WaitGroup{},
 	}
 
+	// 设置事件
 	app.setupEvents()
 
 	// Initialize LSP clients in the background.
@@ -92,6 +99,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 
 	// TODO: remove the concept of agent config, most likely.
 	if cfg.IsConfigured() {
+		// 初始化coder agent
 		if err := app.InitCoderAgent(); err != nil {
 			return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
 		}
@@ -218,22 +226,26 @@ func (app *App) UpdateAgentModel() error {
 
 func (app *App) setupEvents() {
 	ctx, cancel := context.WithCancel(app.globalCtx)
+	// 为事件上下文添加取消功能
 	app.eventsCtx = ctx
-	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "mcp", agent.SubscribeMCPEvents, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
-	cleanupFunc := func() error {
+	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events)                                  // 订阅会话
+	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)                                  // 订阅消息
+	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)                            // 订阅权限
+	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events) // 订阅权限通知
+	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)                                    // 订阅历史
+	setupSubscriber(ctx, app.serviceEventsWG, "mcp", agent.SubscribeMCPEvents, app.events)                                     // 订阅MCP
+	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)                                           // 订阅LSP
+	cleanupFunc := func() error {                                                                                              // 清理函数
 		cancel()
-		app.serviceEventsWG.Wait()
+		app.serviceEventsWG.Wait() // 等待所有订阅者完成
 		return nil
 	}
+
+	// 添加清理函数
 	app.cleanupFuncs = append(app.cleanupFuncs, cleanupFunc)
 }
 
+// setupSubscriber 设置订阅者
 func setupSubscriber[T any](
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -241,25 +253,27 @@ func setupSubscriber[T any](
 	subscriber func(context.Context) <-chan pubsub.Event[T],
 	outputCh chan<- tea.Msg,
 ) {
+	// 创建一个 goroutine 监听订阅者的事件
 	wg.Go(func() {
 		subCh := subscriber(ctx)
 		for {
 			select {
-			case event, ok := <-subCh:
+			case event, ok := <-subCh: // 监听订阅者的事件
 				if !ok {
+					// chan is closed
 					slog.Debug("subscription channel closed", "name", name)
 					return
 				}
 				var msg tea.Msg = event
 				select {
-				case outputCh <- msg:
-				case <-time.After(2 * time.Second):
+				case outputCh <- msg: // 发送事件给输出通道
+				case <-time.After(2 * time.Second): // 2秒内没有处理事件则丢弃
 					slog.Warn("message dropped due to slow consumer", "name", name)
-				case <-ctx.Done():
+				case <-ctx.Done(): // 上下文被cancel，终止订阅，退出循环
 					slog.Debug("subscription cancelled", "name", name)
 					return
 				}
-			case <-ctx.Done():
+			case <-ctx.Done(): // 上下文被cancel，终止订阅，退出循环
 				slog.Debug("subscription cancelled", "name", name)
 				return
 			}
@@ -290,11 +304,12 @@ func (app *App) InitCoderAgent() error {
 	// Add MCP client cleanup to shutdown process
 	app.cleanupFuncs = append(app.cleanupFuncs, agent.CloseMCPClients)
 
+	// 订阅coder agent事件
 	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "coderAgent", app.CoderAgent.Subscribe, app.events)
 	return nil
 }
 
-// Subscribe sends events to the TUI as tea.Msgs.
+// Subscribe 将事件作为 tea.Msgs 发送到 TUI。
 func (app *App) Subscribe(program *tea.Program) {
 	defer log.RecoverPanic("app.Subscribe", func() {
 		slog.Info("TUI subscription panic: attempting graceful shutdown")
@@ -303,24 +318,29 @@ func (app *App) Subscribe(program *tea.Program) {
 
 	app.tuiWG.Add(1)
 	tuiCtx, tuiCancel := context.WithCancel(app.globalCtx)
+
+	// 添加清理函数
 	app.cleanupFuncs = append(app.cleanupFuncs, func() error {
 		slog.Debug("Cancelling TUI message handler")
 		tuiCancel()
 		app.tuiWG.Wait()
 		return nil
 	})
+
 	defer app.tuiWG.Done()
 
 	for {
 		select {
-		case <-tuiCtx.Done():
+		case <-tuiCtx.Done(): // 上下文被cancel，退出循环
 			slog.Debug("TUI message handler shutting down")
 			return
-		case msg, ok := <-app.events:
+		case msg, ok := <-app.events: // 订阅者事件 => app.events => TUI
 			if !ok {
 				slog.Debug("TUI message channel closed")
 				return
 			}
+
+			// 发送事件给TUI
 			program.Send(msg)
 		}
 	}
