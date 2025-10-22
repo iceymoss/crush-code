@@ -72,15 +72,18 @@ crush run "Explain the use of context in Go"
 crush -y
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// 设置 app
 		app, err := setupApp(cmd)
 		if err != nil {
 			return err
 		}
 		defer app.Shutdown()
 
+		// 发送初始化事件完毕事件
 		event.AppInitialized()
 
 		// Set up the TUI.
+		// 创建终端ui程序
 		program := tea.NewProgram(
 			tui.New(app),
 			tea.WithAltScreen(),
@@ -89,8 +92,10 @@ crush -y
 			tea.WithFilter(tui.MouseEventFilter), // Filter mouse events based on focus state
 		)
 
+		// 订阅事件,创建一个 goroutine 监听 TUI 消息
 		go app.Subscribe(program)
 
+		// 运行 终端UI TUI
 		if _, err := program.Run(); err != nil {
 			event.Error(err)
 			slog.Error("TUI run error", "error", err)
@@ -98,6 +103,8 @@ crush -y
 		}
 		return nil
 	},
+
+	// 退出时发送事件
 	PostRun: func(cmd *cobra.Command, args []string) {
 		event.AppExited()
 	},
@@ -180,12 +187,14 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 		return nil, err
 	}
 
+	// 创建app实例
 	appInstance, err := app.New(ctx, conn, cfg)
 	if err != nil {
 		slog.Error("Failed to create app instance", "error", err)
 		return nil, err
 	}
 
+	// 初始化指标
 	if shouldEnableMetrics() {
 		event.Init()
 	}
@@ -193,13 +202,17 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 	return appInstance, nil
 }
 
+// shouldEnableMetrics 如果应启用指标，则返回 true
 func shouldEnableMetrics() bool {
+	// 禁用指标
 	if v, _ := strconv.ParseBool(os.Getenv("CRUSH_DISABLE_METRICS")); v {
 		return false
 	}
+	// 禁用跟踪
 	if v, _ := strconv.ParseBool(os.Getenv("DO_NOT_TRACK")); v {
 		return false
 	}
+	// 禁用
 	if config.Get().Options.DisableMetrics {
 		return false
 	}
