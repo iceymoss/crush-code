@@ -10,54 +10,60 @@ import (
 	"github.com/charmbracelet/crush/internal/pubsub"
 )
 
-// LSPEventType represents the type of LSP event
+// LSPEventType 表示LSP事件的类型
 type LSPEventType string
 
 const (
-	LSPEventStateChanged       LSPEventType = "state_changed"
+	// LSPEventStateChanged LSP事件类型:状态改变
+	LSPEventStateChanged LSPEventType = "state_changed"
+
+	// LSPEventDiagnosticsChanged LSP事件类型:诊断改变
 	LSPEventDiagnosticsChanged LSPEventType = "diagnostics_changed"
 )
 
-// LSPEvent represents an event in the LSP system
+// LSPEvent 代表LSP系统中的一个事件
 type LSPEvent struct {
-	Type            LSPEventType
-	Name            string
-	State           lsp.ServerState
-	Error           error
-	DiagnosticCount int
+	Type            LSPEventType    // 事件类型
+	Name            string          // 事件名称
+	State           lsp.ServerState // LSP服务器状态
+	Error           error           // 错误
+	DiagnosticCount int             // 诊断计数
 }
 
-// LSPClientInfo holds information about an LSP client's state
+// LSPClientInfo 保存有关 LSP 客户端状态的信息
 type LSPClientInfo struct {
-	Name            string
-	State           lsp.ServerState
-	Error           error
-	Client          *lsp.Client
-	DiagnosticCount int
-	ConnectedAt     time.Time
+	Name            string          // LSP客户端名称
+	State           lsp.ServerState // LSP服务器状态
+	Error           error           // 错误
+	Client          *lsp.Client     // LSP客户端
+	DiagnosticCount int             // 诊断计数
+	ConnectedAt     time.Time       // 连接时间
 }
 
 var (
+	// LSP状态存储
 	lspStates = csync.NewMap[string, LSPClientInfo]()
+
+	// LSP事件Broker
 	lspBroker = pubsub.NewBroker[LSPEvent]()
 )
 
-// SubscribeLSPEvents returns a channel for LSP events
+// SubscribeLSPEvents 返回 LSP 事件的通道
 func SubscribeLSPEvents(ctx context.Context) <-chan pubsub.Event[LSPEvent] {
 	return lspBroker.Subscribe(ctx)
 }
 
-// GetLSPStates returns the current state of all LSP clients
+// GetLSPStates 返回所有LSP客户端的当前状态
 func GetLSPStates() map[string]LSPClientInfo {
 	return maps.Collect(lspStates.Seq2())
 }
 
-// GetLSPState returns the state of a specific LSP client
+// GetLSPState 返回特定LSP客户端的状态
 func GetLSPState(name string) (LSPClientInfo, bool) {
 	return lspStates.Get(name)
 }
 
-// updateLSPState updates the state of an LSP client and publishes an event
+// updateLSPState 更新LSP客户端的状态并发布事件
 func updateLSPState(name string, state lsp.ServerState, err error, client *lsp.Client, diagnosticCount int) {
 	info := LSPClientInfo{
 		Name:            name,
@@ -67,11 +73,14 @@ func updateLSPState(name string, state lsp.ServerState, err error, client *lsp.C
 		DiagnosticCount: diagnosticCount,
 	}
 	if state == lsp.StateReady {
+		// 记录连接时间
 		info.ConnectedAt = time.Now()
 	}
+
+	// 更新状态
 	lspStates.Set(name, info)
 
-	// Publish state change event
+	// 发布状态改变事件
 	lspBroker.Publish(pubsub.UpdatedEvent, LSPEvent{
 		Type:            LSPEventStateChanged,
 		Name:            name,
