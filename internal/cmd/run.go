@@ -44,6 +44,8 @@ crush run -q "Generate a README for this project"
 			return err
 		}
 
+		prompt = "哈喽，如何设计一条rust入门到大师的计划？"
+
 		if prompt == "" {
 			return fmt.Errorf("no prompt provided")
 		}

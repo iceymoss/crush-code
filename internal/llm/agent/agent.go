@@ -28,69 +28,100 @@ import (
 	"github.com/charmbracelet/crush/internal/shell"
 )
 
+// AgentEventType 定义了事件类型
 type AgentEventType string
 
 const (
-	AgentEventTypeError     AgentEventType = "error"
-	AgentEventTypeResponse  AgentEventType = "response"
+	// AgentEventTypeError 表示错误
+	AgentEventTypeError AgentEventType = "error"
+
+	// AgentEventTypeResponse 响应
+	AgentEventTypeResponse AgentEventType = "response"
+
+	// AgentEventTypeSummarize 总结
 	AgentEventTypeSummarize AgentEventType = "summarize"
 )
 
+// AgentEvent ai agent 事件
 type AgentEvent struct {
-	Type    AgentEventType
-	Message message.Message
-	Error   error
+	Type    AgentEventType  // 事件类型
+	Message message.Message // 消息
+	Error   error           // 错误
 
 	// When summarizing
-	SessionID string
-	Progress  string
-	Done      bool
+	SessionID string // 会话ID
+	Progress  string // 进度
+	Done      bool   // 是否完成
 }
 
 type Service interface {
+	// Suscriber 订阅事件
 	pubsub.Suscriber[AgentEvent]
+
+	// Model 获取模型
 	Model() catwalk.Model
+
+	// Run 运行agent ai
 	Run(ctx context.Context, sessionID string, content string, attachments ...message.Attachment) (<-chan AgentEvent, error)
+
+	// Cancel 取消一个会话
 	Cancel(sessionID string)
+
+	// CancelAll 取消所有会话
 	CancelAll()
+
+	// IsSessionBusy 检测一个会话是否正在运行
 	IsSessionBusy(sessionID string) bool
+
+	// IsBusy 检测所有会话是否正在运行
 	IsBusy() bool
+
+	// Summarize 总结一个会话的摘要
 	Summarize(ctx context.Context, sessionID string) error
+
+	// UpdateModel 更新模型
 	UpdateModel() error
+
+	// QueuedPrompts 获取一个会话的队列中的提示词数
 	QueuedPrompts(sessionID string) int
+
+	// ClearQueue 清空一个会话的队列
 	ClearQueue(sessionID string)
 }
 
+// agent ai agent
 type agent struct {
-	*pubsub.Broker[AgentEvent]
-	agentCfg    config.Agent
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	baseTools   *csync.Map[string, tools.BaseTool]
-	mcpTools    *csync.Map[string, tools.BaseTool]
-	lspClients  *csync.Map[string, *lsp.Client]
+	*pubsub.Broker[AgentEvent]                                    // ai agent 事件
+	agentCfg                   config.Agent                       // ai agent 配置
+	sessions                   session.Service                    // 会话管理
+	messages                   message.Service                    // 消息管理
+	permissions                permission.Service                 // 权限管理
+	baseTools                  *csync.Map[string, tools.BaseTool] // 基础工具
+	mcpTools                   *csync.Map[string, tools.BaseTool] // mcp 工具
+	lspClients                 *csync.Map[string, *lsp.Client]    // LSP 客户端
 
-	// We need this to be able to update it when model changes
+	// 我们需要它才能在模型更改时更新它
 	agentToolFn  func() (tools.BaseTool, error)
 	cleanupFuncs []func()
 
-	provider   provider.Provider
-	providerID string
+	provider   provider.Provider // 模型提供者
+	providerID string            // 模型提供者ID
 
-	titleProvider       provider.Provider
-	summarizeProvider   provider.Provider
-	summarizeProviderID string
+	titleProvider       provider.Provider // 标题提供者
+	summarizeProvider   provider.Provider // 摘要提供者
+	summarizeProviderID string            // 摘要提供者ID
 
-	activeRequests *csync.Map[string, context.CancelFunc]
-	promptQueue    *csync.Map[string, []string]
+	activeRequests *csync.Map[string, context.CancelFunc] // 当前请求
+	promptQueue    *csync.Map[string, []string]           // 提示词队列
 }
 
+// agentPromptMap 提示词映射
 var agentPromptMap = map[string]prompt.PromptID{
 	"coder": prompt.PromptCoder,
 	"task":  prompt.PromptTask,
 }
 
+// NewAgent 创建一个ai agent
 func NewAgent(
 	ctx context.Context,
 	agentCfg config.Agent,
@@ -101,46 +132,66 @@ func NewAgent(
 	history history.Service,
 	lspClients *csync.Map[string, *lsp.Client],
 ) (Service, error) {
+
+	// 获取配置
 	cfg := config.Get()
 
+	// 创建ai agent tool
 	var agentToolFn func() (tools.BaseTool, error)
+
+	// 如果ai agent是coder，并且agent允许coder工具，则创建coder tool
 	if agentCfg.ID == "coder" && slices.Contains(agentCfg.AllowedTools, AgentToolName) {
 		agentToolFn = func() (tools.BaseTool, error) {
+			// 创建task agent
 			taskAgentCfg := config.Get().Agents["task"]
 			if taskAgentCfg.ID == "" {
 				return nil, fmt.Errorf("task agent not found in config")
 			}
+
+			// 创建task agent
 			taskAgent, err := NewAgent(ctx, taskAgentCfg, permissions, sessions, messages, history, lspClients)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create task agent: %w", err)
 			}
+
+			// 创建coder agent tool
 			return NewAgentTool(taskAgent, sessions, messages), nil
 		}
 	}
 
+	// 获取模型的提供者配置
 	providerCfg := config.Get().GetProviderForModel(agentCfg.Model)
 	if providerCfg == nil {
 		return nil, fmt.Errorf("provider for agent %s not found in config", agentCfg.Name)
 	}
+
+	// 获取模型信息
 	model := config.Get().GetModelByType(agentCfg.Model)
 
 	if model == nil {
 		return nil, fmt.Errorf("model not found for agent %s", agentCfg.Name)
 	}
 
+	// 获取ai agent 的提示词id
 	promptID := agentPromptMap[agentCfg.ID]
 	if promptID == "" {
+		// 默认使用默认的提示词
 		promptID = prompt.PromptDefault
 	}
+
+	// 构建模型提供者客户端选型
 	opts := []provider.ProviderClientOption{
 		provider.WithModel(agentCfg.Model),
 		provider.WithSystemMessage(prompt.GetPrompt(promptID, providerCfg.ID, config.Get().Options.ContextPaths...)),
 	}
+
+	// 创建模型提供者
 	agentProvider, err := provider.NewProvider(*providerCfg, opts...)
 	if err != nil {
 		return nil, err
 	}
 
+	// 创建小模型配置
 	smallModelCfg := cfg.Models[config.SelectedModelTypeSmall]
 	var smallModelProviderCfg *config.ProviderConfig
 	if smallModelCfg.Provider == providerCfg.ID {

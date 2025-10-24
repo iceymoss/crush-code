@@ -22,6 +22,7 @@ const (
 	defaultDataDirectory = ".crush"
 )
 
+// Default context paths
 var defaultContextPaths = []string{
 	".github/copilot-instructions.md",
 	".cursorrules",
@@ -41,13 +42,18 @@ var defaultContextPaths = []string{
 	"Agents.md",
 }
 
+// SelectedModelType 模型选项
 type SelectedModelType string
 
 const (
+	// SelectedModelTypeLarge Large model
 	SelectedModelTypeLarge SelectedModelType = "large"
+
+	// SelectedModelTypeSmall Small model
 	SelectedModelTypeSmall SelectedModelType = "small"
 )
 
+// SelectedModel 模型选项
 type SelectedModel struct {
 	// The model id as used by the provider API.
 	// Required.
@@ -56,51 +62,68 @@ type SelectedModel struct {
 	// Required.
 	Provider string `json:"provider" jsonschema:"required,description=The model provider ID that matches a key in the providers config,example=openai"`
 
-	// Only used by models that use the openai provider and need this set.
+	// 仅由使用 openai 提供程序且需要此集的模型使用
 	ReasoningEffort string `json:"reasoning_effort,omitempty" jsonschema:"description=Reasoning effort level for OpenAI models that support it,enum=low,enum=medium,enum=high"`
 
 	// Overrides the default model configuration.
+	// 最大token
 	MaxTokens int64 `json:"max_tokens,omitempty" jsonschema:"description=Maximum number of tokens for model responses,minimum=1,maximum=200000,example=4096"`
 
 	// Used by anthropic models that can reason to indicate if the model should think.
+	// Think 是否思考
 	Think bool `json:"think,omitempty" jsonschema:"description=Enable thinking mode for Anthropic models that support reasoning"`
 }
 
+// ProviderConfig 模型提供商配置
 type ProviderConfig struct {
 	// The provider's id.
+	// ID 提供商 id
 	ID string `json:"id,omitempty" jsonschema:"description=Unique identifier for the provider,example=openai"`
 	// The provider's name, used for display purposes.
+	// Name 提供商名称
 	Name string `json:"name,omitempty" jsonschema:"description=Human-readable name for the provider,example=OpenAI"`
 	// The provider's API endpoint.
+	// BaseURL 提供商 API 端点
 	BaseURL string `json:"base_url,omitempty" jsonschema:"description=Base URL for the provider's API,format=uri,example=https://api.openai.com/v1"`
-	// The provider type, e.g. "openai", "anthropic", etc. if empty it defaults to openai.
+	// 提供者类型，例如“openai”、“anthropic”等。如果为空，则默认为 openai。
 	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
 	// The provider's API key.
+	// APIKey 提供商 API 密钥
 	APIKey string `json:"api_key,omitempty" jsonschema:"description=API key for authentication with the provider,example=$OPENAI_API_KEY"`
-	// Marks the provider as disabled.
+	// Disable 提供程序标记为已禁用
 	Disable bool `json:"disable,omitempty" jsonschema:"description=Whether this provider is disabled,default=false"`
 
 	// Custom system prompt prefix.
+	// SystemPromptPrefix 自定义系统提示词前缀
 	SystemPromptPrefix string `json:"system_prompt_prefix,omitempty" jsonschema:"description=Custom prefix to add to system prompts for this provider"`
 
-	// Extra headers to send with each request to the provider.
+	// ExtraHeaders 随每个请求发送给提供商的额外标头
 	ExtraHeaders map[string]string `json:"extra_headers,omitempty" jsonschema:"description=Additional HTTP headers to send with requests"`
+
 	// Extra body
+	// ExtraBody 随每个请求发送给提供商的拓展body
 	ExtraBody map[string]any `json:"extra_body,omitempty" jsonschema:"description=Additional fields to include in request bodies"`
 
 	// Used to pass extra parameters to the provider.
+	// ExtraParams 随每个请求发送给提供商的额外参数
 	ExtraParams map[string]string `json:"-"`
 
-	// The provider models
+	// Models 提供商模型
 	Models []catwalk.Model `json:"models,omitempty" jsonschema:"description=List of models available from this provider"`
 }
 
+// MCPType 模型调用代理配置
 type MCPType string
 
 const (
+	// MCPStdio stdio MCP
 	MCPStdio MCPType = "stdio"
-	MCPSSE   MCPType = "sse"
-	MCPHttp  MCPType = "http"
+
+	// MCPSSE sse MCP
+	MCPSSE MCPType = "sse"
+
+	// MCPHttp http MCP
+	MCPHttp MCPType = "http"
 )
 
 type MCPConfig struct {
