@@ -7,28 +7,28 @@ import (
 	"sync"
 )
 
-// Map is a concurrent map implementation that provides thread-safe access.
+// Map 是一个并发安全map实现，提供线程安全访问
 type Map[K comparable, V any] struct {
-	inner map[K]V
-	mu    sync.RWMutex
+	inner map[K]V      // 存储数据的map
+	mu    sync.RWMutex // 读写锁
 }
 
-// NewMap creates a new thread-safe map with the specified key and value types.
+// NewMap 使用指定的键和值类型创建一个新的线程安全map
 func NewMap[K comparable, V any]() *Map[K, V] {
 	return &Map[K, V]{
 		inner: make(map[K]V),
 	}
 }
 
-// NewMapFrom creates a new thread-safe map from an existing map.
+// NewMapFrom 从现有map中创建新的线程安全映射
 func NewMapFrom[K comparable, V any](m map[K]V) *Map[K, V] {
 	return &Map[K, V]{
 		inner: m,
 	}
 }
 
-// NewLazyMap creates a new lazy-loaded map. The provided load function is
-// executed in a separate goroutine to populate the map.
+// NewLazyMap 创建一个新的延迟加载map, 提供的负载函数是
+// 在单独的 goroutine 中执行以填充map
 func NewLazyMap[K comparable, V any](load func() map[K]V) *Map[K, V] {
 	m := &Map[K, V]{}
 	m.mu.Lock()
@@ -39,7 +39,7 @@ func NewLazyMap[K comparable, V any](load func() map[K]V) *Map[K, V] {
 	return m
 }
 
-// Reset replaces the inner map with the new one.
+// Reset 将内部map替换为new map。
 func (m *Map[K, V]) Reset(input map[K]V) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -96,7 +96,7 @@ func (m *Map[K, V]) Take(key K) (V, bool) {
 	return v, ok
 }
 
-// Seq2 returns an iter.Seq2 that yields key-value pairs from the map.
+// Seq2 返回一个 iter.Seq2，它从map中生成键值对。
 func (m *Map[K, V]) Seq2() iter.Seq2[K, V] {
 	dst := make(map[K]V)
 	m.mu.RLock()
