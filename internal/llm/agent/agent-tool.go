@@ -93,6 +93,7 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 	return tools.NewTextResponse(response.Content().String()), nil
 }
 
+// NewAgentTool 创建一个新的代理工具
 func NewAgentTool(
 	agent Service,
 	sessions session.Service,

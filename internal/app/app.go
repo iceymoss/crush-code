@@ -68,7 +68,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	// 授权的工具
 	allowedTools := []string{}
 	if cfg.Permissions != nil && cfg.Permissions.AllowedTools != nil {
-		allowedTools = cfg.Permissions.AllowedTools
+		allowedTools = cfg.Permissions.AllowedTools // 授权的工具
 	}
 
 	// 实例化app管理对象
@@ -280,7 +280,7 @@ func (app *App) setupEvents() {
 	app.cleanupFuncs = append(app.cleanupFuncs, cleanupFunc)
 }
 
-// setupSubscriber 设置订阅者
+// setupSubscriber 设置订阅者,使用总线事件去订阅各个模块服务的消息事件channel
 func setupSubscriber[T any](
 	ctx context.Context,
 	wg *sync.WaitGroup,

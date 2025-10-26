@@ -111,7 +111,7 @@ type agent struct {
 	summarizeProvider   provider.Provider // 摘要提供者
 	summarizeProviderID string            // 摘要提供者ID
 
-	activeRequests *csync.Map[string, context.CancelFunc] // 当前请求
+	activeRequests *csync.Map[string, context.CancelFunc] // 正在活动的请求请求id => cancel ctx 取消上文去终止所有活跃的协程
 	promptQueue    *csync.Map[string, []string]           // 提示词队列
 }
 
@@ -136,7 +136,7 @@ func NewAgent(
 	// 获取配置
 	cfg := config.Get()
 
-	// 创建ai agent tool
+	// 创建agent tool
 	var agentToolFn func() (tools.BaseTool, error)
 
 	// 如果ai agent是coder，并且agent允许coder工具，则创建coder tool
@@ -167,12 +167,12 @@ func NewAgent(
 
 	// 获取模型信息
 	model := config.Get().GetModelByType(agentCfg.Model)
-
 	if model == nil {
 		return nil, fmt.Errorf("model not found for agent %s", agentCfg.Name)
 	}
 
 	// 获取ai agent 的提示词id
+	// 根据配置里面的id获取提示词id
 	promptID := agentPromptMap[agentCfg.ID]
 	if promptID == "" {
 		// 默认使用默认的提示词
@@ -185,7 +185,7 @@ func NewAgent(
 		provider.WithSystemMessage(prompt.GetPrompt(promptID, providerCfg.ID, config.Get().Options.ContextPaths...)),
 	}
 
-	// 创建模型提供者
+	// 创建agent模型提供者
 	agentProvider, err := provider.NewProvider(*providerCfg, opts...)
 	if err != nil {
 		return nil, err
@@ -195,46 +195,59 @@ func NewAgent(
 	smallModelCfg := cfg.Models[config.SelectedModelTypeSmall]
 	var smallModelProviderCfg *config.ProviderConfig
 	if smallModelCfg.Provider == providerCfg.ID {
+		// 如果小模型配置的提供者与ai agent的提供者相同，则使用ai agent的提供者
 		smallModelProviderCfg = providerCfg
 	} else {
+		// 否则，使用小模型配置的提供者
 		smallModelProviderCfg = cfg.GetProviderForModel(config.SelectedModelTypeSmall)
 
 		if smallModelProviderCfg.ID == "" {
 			return nil, fmt.Errorf("provider %s not found in config", smallModelCfg.Provider)
 		}
 	}
+
+	// 获取小模型
 	smallModel := cfg.GetModelByType(config.SelectedModelTypeSmall)
 	if smallModel.ID == "" {
 		return nil, fmt.Errorf("model %s not found in provider %s", smallModelCfg.Model, smallModelProviderCfg.ID)
 	}
 
+	// 创建标题提供者
 	titleOpts := []provider.ProviderClientOption{
 		provider.WithModel(config.SelectedModelTypeSmall),
 		provider.WithSystemMessage(prompt.GetPrompt(prompt.PromptTitle, smallModelProviderCfg.ID)),
 	}
+	// 创建标题提供者
 	titleProvider, err := provider.NewProvider(*smallModelProviderCfg, titleOpts...)
 	if err != nil {
 		return nil, err
 	}
 
+	// 创建摘要提供者配置选项
 	summarizeOpts := []provider.ProviderClientOption{
 		provider.WithModel(config.SelectedModelTypeLarge),
 		provider.WithSystemMessage(prompt.GetPrompt(prompt.PromptSummarizer, providerCfg.ID)),
 	}
+
+	// 创建摘要提供者
 	summarizeProvider, err := provider.NewProvider(*providerCfg, summarizeOpts...)
 	if err != nil {
 		return nil, err
 	}
 
+	// 创建基础工具
 	baseToolsFn := func() map[string]tools.BaseTool {
 		slog.Debug("Initializing agent base tools", "agent", agentCfg.ID)
 		defer func() {
 			slog.Debug("Initialized agent base tools", "agent", agentCfg.ID)
 		}()
 
-		// Base tools available to all agents
+		// 所有代理均可使用的基本工具
+		// 获取工作目录
 		cwd := cfg.WorkingDir()
 		result := make(map[string]tools.BaseTool)
+
+		// 遍历工具对象列表
 		for _, tool := range []tools.BaseTool{
 			tools.NewBashTool(permissions, cwd, cfg.Options.Attribution),
 			tools.NewDownloadTool(permissions, cwd),
@@ -252,6 +265,8 @@ func NewAgent(
 		}
 		return result
 	}
+
+	// 创建mcp工具
 	mcpToolsFn := func() map[string]tools.BaseTool {
 		slog.Debug("Initializing agent mcp tools", "agent", agentCfg.ID)
 		defer func() {
@@ -291,25 +306,28 @@ func (a *agent) Model() catwalk.Model {
 	return *config.Get().GetModelByType(a.agentCfg.Model)
 }
 
+// Cancel cancels a request
 func (a *agent) Cancel(sessionID string) {
-	// Cancel regular requests
+	// 取消常规请求
 	if cancel, ok := a.activeRequests.Take(sessionID); ok && cancel != nil {
 		slog.Info("Request cancellation initiated", "session_id", sessionID)
 		cancel()
 	}
 
-	// Also check for summarize requests
+	// 取消摘要请求
 	if cancel, ok := a.activeRequests.Take(sessionID + "-summarize"); ok && cancel != nil {
 		slog.Info("Summarize cancellation initiated", "session_id", sessionID)
 		cancel()
 	}
 
+	// 检查是否有排队的提示提示词
 	if a.QueuedPrompts(sessionID) > 0 {
 		slog.Info("Clearing queued prompts", "session_id", sessionID)
 		a.promptQueue.Del(sessionID)
 	}
 }
 
+// IsBusy 是否正在处理请求
 func (a *agent) IsBusy() bool {
 	var busy bool
 	for cancelFunc := range a.activeRequests.Seq() {
@@ -321,11 +339,13 @@ func (a *agent) IsBusy() bool {
 	return busy
 }
 
+// IsSessionBusy 获取指定session是否正在处理请求
 func (a *agent) IsSessionBusy(sessionID string) bool {
 	_, busy := a.activeRequests.Get(sessionID)
 	return busy
 }
 
+// QueuedPrompts 获取指定session的排队提示词队列数量
 func (a *agent) QueuedPrompts(sessionID string) int {
 	l, ok := a.promptQueue.Get(sessionID)
 	if !ok {
@@ -1013,8 +1033,10 @@ func (a *agent) ClearQueue(sessionID string) {
 	}
 }
 
+// CancelAll cancel all active requests
 func (a *agent) CancelAll() {
 	if !a.IsBusy() {
+		// 不存在请求，直接返回
 		return
 	}
 	for key := range a.activeRequests.Seq2() {
@@ -1023,6 +1045,7 @@ func (a *agent) CancelAll() {
 
 	for _, cleanup := range a.cleanupFuncs {
 		if cleanup != nil {
+			// 执行所有清理函数
 			cleanup()
 		}
 	}
@@ -1047,9 +1070,9 @@ func (a *agent) UpdateModel() error {
 		return fmt.Errorf("provider for agent %s not found in config", a.agentCfg.Name)
 	}
 
-	// Check if provider has changed
+	// 检查提供商是否已更改
 	if string(currentProviderCfg.ID) != a.providerID {
-		// Provider changed, need to recreate the main provider
+		// 提供商更改，需要重新创建主提供商
 		model := cfg.GetModelByType(a.agentCfg.Model)
 		if model.ID == "" {
 			return fmt.Errorf("model not found for agent %s", a.agentCfg.Name)
@@ -1070,7 +1093,7 @@ func (a *agent) UpdateModel() error {
 			return fmt.Errorf("failed to create new provider: %w", err)
 		}
 
-		// Update the provider and provider ID
+		// 更新提供商和提供商 ID
 		a.provider = newProvider
 		a.providerID = string(currentProviderCfg.ID)
 	}
