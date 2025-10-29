@@ -68,10 +68,10 @@ type ContentPart interface {
 }
 
 type ReasoningContent struct {
-	Thinking   string `json:"thinking"`
-	Signature  string `json:"signature"`
-	StartedAt  int64  `json:"started_at,omitempty"`
-	FinishedAt int64  `json:"finished_at,omitempty"`
+	Thinking   string `json:"thinking"`              // 模型的思考过程/推理链
+	Signature  string `json:"signature"`             // 数字签名/验证信息，防止被篡改
+	StartedAt  int64  `json:"started_at,omitempty"`  // 推理开始时间戳
+	FinishedAt int64  `json:"finished_at,omitempty"` // 推理结束时间戳
 }
 
 func (tc ReasoningContent) String() string {
@@ -116,22 +116,24 @@ func (bc BinaryContent) String(p catwalk.InferenceProvider) string {
 
 func (BinaryContent) isPart() {}
 
+// ToolCall 工具调用请求结构体
 type ToolCall struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Input    string `json:"input"`
-	Type     string `json:"type"`
-	Finished bool   `json:"finished"`
+	ID       string `json:"id"`       // 调用唯一标识
+	Name     string `json:"name"`     // 工具函数名
+	Input    string `json:"input"`    // 调用参数（通常是JSON）
+	Type     string `json:"type"`     // 工具类型
+	Finished bool   `json:"finished"` // 是否完成
 }
 
 func (ToolCall) isPart() {}
 
+// ToolResult 工具调用结果结构体
 type ToolResult struct {
-	ToolCallID string `json:"tool_call_id"`
-	Name       string `json:"name"`
-	Content    string `json:"content"`
-	Metadata   string `json:"metadata"`
-	IsError    bool   `json:"is_error"`
+	ToolCallID string `json:"tool_call_id"` // 关联的调用ID
+	Name       string `json:"name"`         // 工具名（与ToolCall对应）
+	Content    string `json:"content"`      // 工具返回结果
+	Metadata   string `json:"metadata"`     // 元数据（如执行耗时、状态码）
+	IsError    bool   `json:"is_error"`     // 是否出错
 }
 
 func (ToolResult) isPart() {}
@@ -261,7 +263,9 @@ func (m *Message) AppendContent(delta string) {
 	}
 }
 
+// AppendReasoningContent 追加推理内容
 func (m *Message) AppendReasoningContent(delta string) {
+	// 是否追加推理结果
 	found := false
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
@@ -275,6 +279,7 @@ func (m *Message) AppendReasoningContent(delta string) {
 		}
 	}
 	if !found {
+		// 创建推理结果
 		m.Parts = append(m.Parts, ReasoningContent{
 			Thinking:  delta,
 			StartedAt: time.Now().Unix(),
@@ -282,6 +287,7 @@ func (m *Message) AppendReasoningContent(delta string) {
 	}
 }
 
+// AppendReasoningSignature 追加推理签名
 func (m *Message) AppendReasoningSignature(signature string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
@@ -297,6 +303,7 @@ func (m *Message) AppendReasoningSignature(signature string) {
 	m.Parts = append(m.Parts, ReasoningContent{Signature: signature})
 }
 
+// FinishThinking 结束推理
 func (m *Message) FinishThinking() {
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
@@ -327,6 +334,7 @@ func (m *Message) ThinkingDuration() time.Duration {
 	return time.Duration(endTime-reasoning.StartedAt) * time.Second
 }
 
+// FinishToolCall 结束工具调用
 func (m *Message) FinishToolCall(toolCallID string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
@@ -344,6 +352,7 @@ func (m *Message) FinishToolCall(toolCallID string) {
 	}
 }
 
+// AppendToolCallInput 追加工具调用参数输入
 func (m *Message) AppendToolCallInput(toolCallID string, inputDelta string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
@@ -361,6 +370,7 @@ func (m *Message) AppendToolCallInput(toolCallID string, inputDelta string) {
 	}
 }
 
+// AddToolCall 添加工具调用请求
 func (m *Message) AddToolCall(tc ToolCall) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
@@ -374,7 +384,7 @@ func (m *Message) AddToolCall(tc ToolCall) {
 }
 
 func (m *Message) SetToolCalls(tc []ToolCall) {
-	// remove any existing tool call part it could have multiple
+	// 删除任何现有的工具调用部分，它可能有多个
 	parts := make([]ContentPart, 0)
 	for _, part := range m.Parts {
 		if _, ok := part.(ToolCall); ok {
