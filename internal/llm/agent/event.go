@@ -14,6 +14,7 @@ func (a *agent) eventPromptSent(sessionID string) {
 	)
 }
 
+// eventPromptResponded 发送一个 PromptResponded标记响应完成事件
 func (a *agent) eventPromptResponded(sessionID string, duration time.Duration) {
 	event.PromptResponded(
 		append(

@@ -20,14 +20,46 @@ const (
 type FinishReason string
 
 const (
-	FinishReasonEndTurn          FinishReason = "end_turn"
-	FinishReasonMaxTokens        FinishReason = "max_tokens"
-	FinishReasonToolUse          FinishReason = "tool_use"
-	FinishReasonCanceled         FinishReason = "canceled"
-	FinishReasonError            FinishReason = "error"
+	// FinishReasonEndTurn 自然结束
+	// 模型认为自己已经完成了当前回合的回复
+	// 典型场景：问答完成后模型主动结束对话轮次
+	// 处理建议：这是最理想的结束状态，可继续后续对话
+	FinishReasonEndTurn FinishReason = "end_turn"
+
+	// FinishReasonMaxTokens 达到token限制
+	// 因达到最大生成token数限制而被强制停止
+	// 典型场景：生成长文本时触发生成长度上限
+	// 处理建议：可能需要调整max_tokens参数或分段生成
+	FinishReasonMaxTokens FinishReason = "max_tokens"
+
+	// FinishReasonToolUse 需要工具调用
+	// 模型决定调用外部工具/函数而暂停文本生成
+	// 典型场景：模型需要调用计算器、查询API等外部功能
+	// 处理建议：执行相应工具后，将结果返回给模型继续生成
+	FinishReasonToolUse FinishReason = "tool_use"
+
+	// FinishReasonCanceled 请求被取消
+	// 用户或系统主动取消了生成请求
+	// 典型场景：用户点击"停止生成"按钮、超时取消等
+	// 处理建议：清理资源，可能需要进行回滚操作
+	FinishReasonCanceled FinishReason = "canceled"
+
+	// FinishReasonError 发生错误
+	// 模型推理过程中发生技术错误
+	// 典型场景：模型服务内部错误、网络问题等
+	// 处理建议：记录错误日志，可能需要进行重试
+	FinishReasonError FinishReason = "error"
+
+	// FinishReasonPermissionDenied 权限拒绝
+	// 因权限不足而停止生成
+	// 典型场景：尝试访问受限内容、API密钥无效等
+	// 处理建议：检查权限设置和认证信息
 	FinishReasonPermissionDenied FinishReason = "permission_denied"
 
-	// Should never happen
+	// FinishReasonUnknown 未知原因
+	// 理论上不应该出现的未知结束原因
+	// 典型场景：系统异常、版本不兼容等边界情况
+	// 处理建议：作为兜底处理，记录详细日志供排查
 	FinishReasonUnknown FinishReason = "unknown"
 )
 

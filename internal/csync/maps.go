@@ -87,7 +87,7 @@ func (m *Map[K, V]) GetOrSet(key K, fn func() V) V {
 	return value
 }
 
-// Take gets an item and then deletes it.
+// Take 获取一个项目，然后删除它
 func (m *Map[K, V]) Take(key K) (V, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
