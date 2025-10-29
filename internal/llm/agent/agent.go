@@ -510,7 +510,7 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 	return events, nil
 }
 
-// processGeneration 处理生成，并且返回一个AgentEvent
+// processGeneration 处理生成，优化消息历史，使用消息摘要，减少token，并且自动加载提示词队列中的等待消息，最后返回一个AgentEvent
 func (a *agent) processGeneration(ctx context.Context, sessionID, content string, attachmentParts []message.ContentPart) AgentEvent {
 	// 获取配置
 	cfg := config.Get()
@@ -612,7 +612,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			slog.Info("Result", "message", agentMessage.FinishReason(), "toolResults", toolResults)
 		}
 
-		// 如果agent结束的原因是因为需要使用工具，并且工具结果不为空
+		// 如果agent结束内容生成的原因是因为需要使用工具，并且工具结果不为空
 		if (agentMessage.FinishReason() == message.FinishReasonToolUse) && toolResults != nil {
 			// 我们还没有完成，我们需要用工具回应响应
 			msgHistory = append(msgHistory, agentMessage, *toolResults)
@@ -634,7 +634,8 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 
 			continue
 		} else if agentMessage.FinishReason() == message.FinishReasonEndTurn { // 模型结束，并且需要结束当前轮次
-			// 检查是否有排队的提示词
+			// 自然结束 模型认为自己已经完成了当前回合的回复 典型场景：问答完成后模型主动结束对话轮次 处理建议：这是最理想的结束状态，可继续后续对话
+			// 完成当前一轮对话后，检查是否有排队的提示词，如果有需要拿出提示词继续对话
 			queuePrompts, ok := a.promptQueue.Take(sessionID)
 			if ok {
 				for _, prompt := range queuePrompts {
@@ -659,7 +660,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			return a.err(ErrRequestCancelled)
 		}
 
-		// 返回结果
+		// 整个对话结束，返回agent事件
 		return AgentEvent{
 			Type:    AgentEventTypeResponse,
 			Message: agentMessage,
@@ -708,10 +709,13 @@ func (a *agent) getAllTools() ([]tools.BaseTool, error) {
 	return allTools, nil
 }
 
+// streamAndHandleEvents 获取模型生成的结果，并返回结果和工具执行结果
 func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msgHistory []message.Message) (message.Message, *message.Message, error) {
+	// 将会话id写入ctx
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, sessionID)
 
-	// Create the assistant message first so the spinner shows immediately
+	// 首先创建助理消息，以便微调器立即显示
+	// 创建一个助理消息，用于后续结构化处理
 	assistantMsg, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:     message.Assistant,
 		Parts:    []message.ContentPart{},
@@ -722,44 +726,53 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 		return assistantMsg, nil, fmt.Errorf("failed to create assistant message: %w", err)
 	}
 
+	// 获取当前agent的所有工具
 	allTools, toolsErr := a.getAllTools()
 	if toolsErr != nil {
 		return assistantMsg, nil, toolsErr
 	}
 	// Now collect tools (which may block on MCP initialization)
+	// 现在收集工具，但这可能会导致MCP初始化
+	// 模型提供者做流式响应
 	eventChan := a.provider.StreamResponse(ctx, msgHistory, allTools)
 
-	// Add the session and message ID into the context if needed by tools.
+	// 如果工具需要，请将会话和消息 ID 添加到上下文中
 	ctx = context.WithValue(ctx, tools.MessageIDContextKey, assistantMsg.ID)
 
 loop:
 	for {
 		select {
-		case event, ok := <-eventChan:
-			if !ok {
+		case event, ok := <-eventChan: // 订阅监听模型处理消息chan，接收到模型提供者事件
+			if !ok { // chan已关闭
+				// 跳出循环
 				break loop
 			}
+			// 处理模型提供者流式返回的各种事件，并且将其事件消息格式化，然后更新到message中
 			if processErr := a.processEvent(ctx, sessionID, &assistantMsg, event); processErr != nil {
-				if errors.Is(processErr, context.Canceled) {
+				if errors.Is(processErr, context.Canceled) { // 上下文被取消
 					a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
-				} else {
+				} else { // API 错误
 					a.finishMessage(ctx, &assistantMsg, message.FinishReasonError, "API Error", processErr.Error())
 				}
+				// 返回优化后的消息
 				return assistantMsg, nil, processErr
 			}
-		case <-ctx.Done():
+		case <-ctx.Done(): // 上下文被取消
 			a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
 			return assistantMsg, nil, ctx.Err()
 		}
 	}
 
+	// 初始化一个工具执行结果队列
 	toolResults := make([]message.ToolResult, len(assistantMsg.ToolCalls()))
+
+	// 获取当前辅助器的全部工具调用
 	toolCalls := assistantMsg.ToolCalls()
-	for i, toolCall := range toolCalls {
+	for i, toolCall := range toolCalls { // 遍历当前助手的全部工具调用
 		select {
-		case <-ctx.Done():
+		case <-ctx.Done(): // 上下文被取消
 			a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
-			// Make all future tool calls cancelled
+			// 取消所有未来的工具调用
 			for j := i; j < len(toolCalls); j++ {
 				toolResults[j] = message.ToolResult{
 					ToolCallID: toolCalls[j].ID,
@@ -767,20 +780,24 @@ loop:
 					IsError:    true,
 				}
 			}
-			goto out
+			goto out // 跳转到out
 		default:
-			// Continue processing
+			// 继续处理
 			var tool tools.BaseTool
+
+			// 获取agent的所有工具
 			allTools, _ = a.getAllTools()
 			for _, availableTool := range allTools {
+				// 检查工具是否属于agent的工具
 				if availableTool.Info().Name == toolCall.Name {
 					tool = availableTool
 					break
 				}
 			}
 
-			// Tool not found
+			// 找不到工具
 			if tool == nil {
+				// 将当前工具结果写入具体工具处理结果
 				toolResults[i] = message.ToolResult{
 					ToolCallID: toolCall.ID,
 					Content:    fmt.Sprintf("Tool not found: %s", toolCall.Name),
@@ -789,25 +806,31 @@ loop:
 				continue
 			}
 
-			// Run tool in goroutine to allow cancellation
+			// 在 goroutine 中运行工具以允许取消
 			type toolExecResult struct {
 				response tools.ToolResponse
 				err      error
 			}
+
+			// 用于同步工具执行结果
 			resultChan := make(chan toolExecResult, 1)
 
 			go func() {
+				// 执行工具
 				response, err := tool.Run(ctx, tools.ToolCall{
 					ID:    toolCall.ID,
 					Name:  toolCall.Name,
 					Input: toolCall.Input,
 				})
+
+				// 将执行结果写入chan
 				resultChan <- toolExecResult{response: response, err: err}
 			}()
 
 			var toolResponse tools.ToolResponse
 			var toolErr error
 
+			// 等待工具执行结果和上下文状态
 			select {
 			case <-ctx.Done():
 				a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
@@ -819,15 +842,17 @@ loop:
 						IsError:    true,
 					}
 				}
-				goto out
-			case result := <-resultChan:
+				goto out // 跳转到out
+			case result := <-resultChan: // 监听工具执行结果
 				toolResponse = result.response
 				toolErr = result.err
 			}
 
+			// 工具执行错误
 			if toolErr != nil {
 				slog.Error("Tool execution error", "toolCall", toolCall.ID, "error", toolErr)
 				if errors.Is(toolErr, permission.ErrorPermissionDenied) {
+					// 检查是否权限导致的问题
 					toolResults[i] = message.ToolResult{
 						ToolCallID: toolCall.ID,
 						Content:    "Permission denied",
@@ -840,10 +865,16 @@ loop:
 							IsError:    true,
 						}
 					}
+
+					// 发送调用结束消息
 					a.finishMessage(ctx, &assistantMsg, message.FinishReasonPermissionDenied, "Permission denied", "")
+
+					// 停止后续工具执行
 					break
 				}
 			}
+
+			// 记录当前工具执行结果
 			toolResults[i] = message.ToolResult{
 				ToolCallID: toolCall.ID,
 				Content:    toolResponse.Content,
@@ -852,7 +883,7 @@ loop:
 			}
 		}
 	}
-out:
+out: // 上下文被取消
 	if len(toolResults) == 0 {
 		return assistantMsg, nil, nil
 	}
@@ -860,6 +891,7 @@ out:
 	for _, tr := range toolResults {
 		parts = append(parts, tr)
 	}
+	// 创建一个工具消息
 	msg, err := a.messages.Create(context.Background(), assistantMsg.SessionID, message.CreateMessageParams{
 		Role:     message.Tool,
 		Parts:    parts,
@@ -913,7 +945,9 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 	case provider.EventError:
 		return event.Error
 	case provider.EventComplete:
+		// 结束推理
 		assistantMsg.FinishThinking()
+		// 设置工具调用
 		assistantMsg.SetToolCalls(event.Response.ToolCalls)
 		assistantMsg.AddFinish(event.Response.FinishReason, "", "")
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
