@@ -302,11 +302,12 @@ func NewAgent(
 	return a, nil
 }
 
+// Model 获取模型
 func (a *agent) Model() catwalk.Model {
 	return *config.Get().GetModelByType(a.agentCfg.Model)
 }
 
-// Cancel cancels a request
+// Cancel 取消请求
 func (a *agent) Cancel(sessionID string) {
 	// 取消常规请求
 	if cancel, ok := a.activeRequests.Take(sessionID); ok && cancel != nil {
@@ -354,6 +355,7 @@ func (a *agent) QueuedPrompts(sessionID string) int {
 	return len(l)
 }
 
+// generateTitle 生成标题并将标题保存到session中
 func (a *agent) generateTitle(ctx context.Context, sessionID string, content string) error {
 	if content == "" {
 		return nil
@@ -369,7 +371,7 @@ func (a *agent) generateTitle(ctx context.Context, sessionID string, content str
 		Text: fmt.Sprintf("Generate a concise title for the following content:\n\n%s", content),
 	}}
 
-	// Use streaming approach like summarization
+	// 使用摘要等流式方法
 	response := a.titleProvider.StreamResponse(
 		ctx,
 		[]message.Message{
@@ -381,6 +383,11 @@ func (a *agent) generateTitle(ctx context.Context, sessionID string, content str
 		nil,
 	)
 
+	// 流式返回，每一次都是一个最近的整体，所以这里一最后一次的结果就是整体内容
+	// 第一次响应： "Hel"
+	// 第二次响应： "Hello"
+	// 第三次响应： "Hello wor"
+	// 最终响应： "Hello world"
 	var finalResponse *provider.ProviderResponse
 	for r := range response {
 		if r.Error != nil {
@@ -393,6 +400,7 @@ func (a *agent) generateTitle(ctx context.Context, sessionID string, content str
 		return fmt.Errorf("no response received from title provider")
 	}
 
+	// 格式化标题
 	title := strings.ReplaceAll(finalResponse.Content, "\n", " ")
 
 	if idx := strings.Index(title, "</think>"); idx > 0 {
@@ -404,11 +412,13 @@ func (a *agent) generateTitle(ctx context.Context, sessionID string, content str
 		return nil
 	}
 
+	// 保存标题
 	session.Title = title
 	_, err = a.sessions.Save(ctx, session)
 	return err
 }
 
+// err 创建一个错误事件
 func (a *agent) err(err error) AgentEvent {
 	return AgentEvent{
 		Type:  AgentEventTypeError,
@@ -416,12 +426,19 @@ func (a *agent) err(err error) AgentEvent {
 	}
 }
 
+// Run 运行代理
 func (a *agent) Run(ctx context.Context, sessionID string, content string, attachments ...message.Attachment) (<-chan AgentEvent, error) {
+	// 检查是否支持图片
 	if !a.Model().SupportsImages && attachments != nil {
 		attachments = nil
 	}
+
+	// 创建agent事件通道
 	events := make(chan AgentEvent, 1)
+
+	// 检查是否正在处理请求
 	if a.IsSessionBusy(sessionID) {
+		// 添加到队列
 		existing, ok := a.promptQueue.Get(sessionID)
 		if !ok {
 			existing = []string{}
@@ -431,19 +448,30 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 		return nil, nil
 	}
 
+	// 创建取消函数
 	genCtx, cancel := context.WithCancel(ctx)
+
+	// 添加到正在处理的请求中map中
 	a.activeRequests.Set(sessionID, cancel)
+
+	// 统计请求时间
 	startTime := time.Now()
 
+	// 异步流式处理，通过chan发送结果
 	go func() {
 		slog.Debug("Request started", "sessionID", sessionID)
 		defer log.RecoverPanic("agent.Run", func() {
+			// 捕获panic
 			events <- a.err(fmt.Errorf("panic while running the agent"))
 		})
+
+		// 创建附件内容消息数据结构
 		var attachmentParts []message.ContentPart
 		for _, attachment := range attachments {
 			attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content})
 		}
+
+		// agent流式生成响应
 		result := a.processGeneration(genCtx, sessionID, content, attachmentParts)
 		if result.Error != nil {
 			if isCancelledErr(result.Error) {
@@ -455,20 +483,39 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 		} else {
 			slog.Debug("Request completed", "sessionID", sessionID)
 		}
+
+		// 发送已响应事件
 		a.eventPromptResponded(sessionID, time.Since(startTime).Truncate(time.Second))
+
+		// 删除正在处理的请求, 让出当前请求会话占用，允许下一个请求开始
 		a.activeRequests.Del(sessionID)
+
+		// 触发取消信号，可能是结束a.activeRequests.Set(sessionID, cancel)的某些逻辑
 		cancel()
+
+		// 发送创建事件, 让外部知道请求已经创建，并且返回响应内容
 		a.Publish(pubsub.CreatedEvent, result)
+
+		// 将响应发送给订阅者
 		events <- result
+
+		// 关闭事件通道,通知订阅者，响应已经完成
 		close(events)
 	}()
+
+	// 发送已发送事件
 	a.eventPromptSent(sessionID)
+
+	// 返回事件通道，订阅者可以通过这个通道获取响应
 	return events, nil
 }
 
+// processGeneration 处理生成，并且返回一个AgentEvent
 func (a *agent) processGeneration(ctx context.Context, sessionID, content string, attachmentParts []message.ContentPart) AgentEvent {
+	// 获取配置
 	cfg := config.Get()
-	// List existing messages; if none, start title generation asynchronously.
+
+	// 列出现有会话消息；如果没有，则异步开始标题生成。
 	msgs, err := a.messages.List(ctx, sessionID)
 	if err != nil {
 		return a.err(fmt.Errorf("failed to list messages: %w", err))
@@ -484,70 +531,110 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			}
 		}()
 	}
+
+	// 获取会话
 	session, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return a.err(fmt.Errorf("failed to get session: %w", err))
 	}
+
+	// 核心逻辑：用摘要消息替代冗长的历史对话,大幅减少token使用量
+	// 这种设计是现代AI对话系统的核心优化技术，让系统能够"记住"重要信息而不会遗忘上下文
+	// 原始消息: [消息1, 消息2, 消息3, ..., 消息20] (可能很长)
+	// 摘要处理: [摘要消息, 消息18, 消息19, 消息20] (大幅缩短)
+	//示例：
+	//原始对话（30条）：
+	//用户: 帮我写个Python函数计算阶乘
+	//AI: def factorial(n):...
+	//用户: 能加个缓存优化吗？
+	//...（25条优化讨论）...
+	//用户: 现在如何添加类型提示？ ← 当前问题
+	//
+	//摘要处理：
+	//摘要消息: "用户要求编写带缓存的阶乘函数，已完成基础实现"
+	//当前消息: "现在如何添加类型提示？"
+	//
+	//AI基于完整上下文提供类型提示方案
+
 	if session.SummaryMessageID != "" {
 		summaryMsgInex := -1
+		// 步骤1：查找摘要消息在历史中的位置
 		for i, msg := range msgs {
+			// 消息id和会话摘要匹配，标记该消息
 			if msg.ID == session.SummaryMessageID {
+				// 找到摘要位置
 				summaryMsgInex = i
 				break
 			}
 		}
 		if summaryMsgInex != -1 {
+			// 保留从摘要开始的所有消息
 			msgs = msgs[summaryMsgInex:]
+			// 步骤3：将摘要消息角色改为用户
 			msgs[0].Role = message.User
 		}
 	}
 
+	// 创建用户消息
 	userMsg, err := a.createUserMessage(ctx, sessionID, content, attachmentParts)
 	if err != nil {
 		return a.err(fmt.Errorf("failed to create user message: %w", err))
 	}
-	// Append the new user message to the conversation history.
+	// 将新用户消息追加到对话历史记录中
 	msgHistory := append(msgs, userMsg)
 
 	for {
-		// Check for cancellation before each iteration
+		// 每次迭代前检查取消情况
 		select {
-		case <-ctx.Done():
+		case <-ctx.Done(): // 检查取消情况，这里应该是存在规则：如果取消，则返回取消错误
 			return a.err(ctx.Err())
 		default:
 			// Continue processing
 		}
+
+		// 将整个历史记录发送给模型进行生成， 返回ai agent 的结果和工具执行结果
 		agentMessage, toolResults, err := a.streamAndHandleEvents(ctx, sessionID, msgHistory)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
+				// Canceled
 				agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "")
+
+				// Update the message
 				a.messages.Update(context.Background(), agentMessage)
 				return a.err(ErrRequestCancelled)
 			}
 			return a.err(fmt.Errorf("failed to process events: %w", err))
 		}
+
 		if cfg.Options.Debug {
+			// 配置debug模式
+			// 输出结果
 			slog.Info("Result", "message", agentMessage.FinishReason(), "toolResults", toolResults)
 		}
+
+		// 如果agent结束的原因是因为需要使用工具，并且工具结果不为空
 		if (agentMessage.FinishReason() == message.FinishReasonToolUse) && toolResults != nil {
-			// We are not done, we need to respond with the tool response
+			// 我们还没有完成，我们需要用工具回应响应
 			msgHistory = append(msgHistory, agentMessage, *toolResults)
-			// If there are queued prompts, process the next one
+
+			// 获取当前会话的全部提示词，并且将其该会话的提示词从map中移除
 			nextPrompt, ok := a.promptQueue.Take(sessionID)
 			if ok {
+				// 遍历提示词对啦，构建消息
 				for _, prompt := range nextPrompt {
-					// Create a new user message for the queued prompt
+					// 为排队提示词创建新用户消息
 					userMsg, err := a.createUserMessage(ctx, sessionID, prompt, nil)
 					if err != nil {
 						return a.err(fmt.Errorf("failed to create user message for queued prompt: %w", err))
 					}
-					// Append the new user message to the conversation history
+					// 将新用户消息追加到对话历史记录中
 					msgHistory = append(msgHistory, userMsg)
 				}
 			}
 
 			continue
-		} else if agentMessage.FinishReason() == message.FinishReasonEndTurn {
+		} else if agentMessage.FinishReason() == message.FinishReasonEndTurn { // 模型结束，并且需要结束当前轮次
+			// 检查是否有排队的提示词
 			queuePrompts, ok := a.promptQueue.Take(sessionID)
 			if ok {
 				for _, prompt := range queuePrompts {
@@ -563,12 +650,16 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 				continue
 			}
 		}
+
+		// agent 没有结束原因
 		if agentMessage.FinishReason() == "" {
-			// Kujtim: could not track down where this is happening but this means its cancelled
+			// Kujtim: 无法追踪发生这种情况的位置，但这意味着它被取消了
 			agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "")
 			_ = a.messages.Update(context.Background(), agentMessage)
 			return a.err(ErrRequestCancelled)
 		}
+
+		// 返回结果
 		return AgentEvent{
 			Type:    AgentEventTypeResponse,
 			Message: agentMessage,
@@ -577,6 +668,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 	}
 }
 
+// createUserMessage 创建用户消息
 func (a *agent) createUserMessage(ctx context.Context, sessionID, content string, attachmentParts []message.ContentPart) (message.Message, error) {
 	parts := []message.ContentPart{message.TextContent{Text: content}}
 	parts = append(parts, attachmentParts...)
@@ -586,19 +678,26 @@ func (a *agent) createUserMessage(ctx context.Context, sessionID, content string
 	})
 }
 
+// getAllTools 获取所有工具
 func (a *agent) getAllTools() ([]tools.BaseTool, error) {
 	var allTools []tools.BaseTool
+
+	// 获取基本工具
 	for tool := range a.baseTools.Seq() {
 		if a.agentCfg.AllowedTools == nil || slices.Contains(a.agentCfg.AllowedTools, tool.Name()) {
 			allTools = append(allTools, tool)
 		}
 	}
+
+	// 获取agent cmp 工具
 	if a.agentCfg.ID == "coder" {
 		allTools = slices.AppendSeq(allTools, a.mcpTools.Seq())
 		if a.lspClients.Len() > 0 {
 			allTools = append(allTools, tools.NewDiagnosticsTool(a.lspClients), tools.NewReferencesTool(a.lspClients))
 		}
 	}
+
+	// 获取代理工具
 	if a.agentToolFn != nil {
 		agentTool, agentToolErr := a.agentToolFn()
 		if agentToolErr != nil {
@@ -773,11 +872,13 @@ out:
 	return assistantMsg, &msg, err
 }
 
+// finishMessage 结束消息
 func (a *agent) finishMessage(ctx context.Context, msg *message.Message, finishReason message.FinishReason, message, details string) {
 	msg.AddFinish(finishReason, message, details)
 	_ = a.messages.Update(ctx, *msg)
 }
 
+// processEvent 处理各种事件，并且将内容更新到消息中
 func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg *message.Message, event provider.ProviderEvent) error {
 	select {
 	case <-ctx.Done():
@@ -824,23 +925,32 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 	return nil
 }
 
+// trackUsage 跟踪模型的使用情况，并更新会话的消耗和令牌使用情况。
 func (a *agent) trackUsage(ctx context.Context, sessionID string, model catwalk.Model, usage provider.TokenUsage) error {
 	sess, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
+	// 计算模型消耗
 	cost := model.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
 		model.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
 		model.CostPer1MIn/1e6*float64(usage.InputTokens) +
 		model.CostPer1MOut/1e6*float64(usage.OutputTokens)
 
+	// 创建token使用事件
 	a.eventTokensUsed(sessionID, usage, cost)
 
+	// 统计模型消耗
 	sess.Cost += cost
+
+	// 统计完成的消耗
 	sess.CompletionTokens = usage.OutputTokens + usage.CacheReadTokens
+
+	// 统计输入消耗
 	sess.PromptTokens = usage.InputTokens + usage.CacheCreationTokens
 
+	// 保存到会话中
 	_, err = a.sessions.Save(ctx, sess)
 	if err != nil {
 		return fmt.Errorf("failed to save session: %w", err)
@@ -1026,6 +1136,7 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// ClearQueue 清空队列
 func (a *agent) ClearQueue(sessionID string) {
 	if a.QueuedPrompts(sessionID) > 0 {
 		slog.Info("Clearing queued prompts", "session_id", sessionID)
@@ -1033,7 +1144,7 @@ func (a *agent) ClearQueue(sessionID string) {
 	}
 }
 
-// CancelAll cancel all active requests
+// CancelAll 取消所有活动请求
 func (a *agent) CancelAll() {
 	if !a.IsBusy() {
 		// 不存在请求，直接返回
@@ -1162,28 +1273,36 @@ func (a *agent) UpdateModel() error {
 	return nil
 }
 
+// SubscribeMCPEvents 订阅MCP事件
 func (a *agent) setupEvents(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	go func() {
+		// 订阅MCP事件
 		subCh := SubscribeMCPEvents(ctx)
 
 		for {
 			select {
-			case event, ok := <-subCh:
+			case event, ok := <-subCh: // 监听MCP事件
 				if !ok {
 					slog.Debug("MCPEvents subscription channel closed")
 					return
 				}
 				switch event.Payload.Type {
-				case MCPEventToolsListChanged:
+				case MCPEventToolsListChanged: // MCP工具列表已更改
 					name := event.Payload.Name
+
+					// 获取MCP客户端
 					c, ok := mcpClients.Get(name)
 					if !ok {
 						slog.Warn("MCP client not found for tools update", "name", name)
 						continue
 					}
+
+					// 获取配置
 					cfg := config.Get()
+
+					// 从配置中获取工具
 					tools, err := getTools(ctx, name, a.permissions, c, cfg.WorkingDir())
 					if err != nil {
 						slog.Error("error listing tools", "error", err)
@@ -1191,18 +1310,25 @@ func (a *agent) setupEvents(ctx context.Context) {
 						_ = c.Close()
 						continue
 					}
+
+					// 更新MCP工具
 					updateMcpTools(name, tools)
+
+					// 重置MCP工具
 					a.mcpTools.Reset(maps.Collect(mcpTools.Seq2()))
+
+					// 更新MCP状态
 					updateMCPState(name, MCPStateConnected, nil, c, a.mcpTools.Len())
 				default:
 					continue
 				}
-			case <-ctx.Done():
+			case <-ctx.Done(): // 监听取消信号，终止订阅
 				slog.Debug("MCPEvents subscription cancelled")
 				return
 			}
 		}
 	}()
 
+	// 将订阅函数添加到清理函数列表中，以便在取消时取消订阅
 	a.cleanupFuncs = append(a.cleanupFuncs, cancel)
 }

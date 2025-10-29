@@ -11,23 +11,81 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 )
 
+// EventType 定义大模型流式响应的事件类型
 type EventType string
 
+// maxRetries 定义最大重试次数，用于API调用失败时的重试机制
 const maxRetries = 3
 
+// 大模型流式响应事件类型常量定义
 const (
-	EventContentStart   EventType = "content_start"
-	EventToolUseStart   EventType = "tool_use_start"
-	EventToolUseDelta   EventType = "tool_use_delta"
-	EventToolUseStop    EventType = "tool_use_stop"
-	EventContentDelta   EventType = "content_delta"
-	EventThinkingDelta  EventType = "thinking_delta"
+	// EventContentStart 内容生成开始事件
+	// 触发时机：大模型开始生成回复内容时
+	// 典型用途：初始化UI状态，显示"正在输入"指示器
+	EventContentStart EventType = "content_start"
+
+	// EventToolUseStart 工具调用开始事件
+	// 触发时机：大模型开始调用外部工具/函数时
+	// 典型用途：准备工具执行环境，显示工具加载状态
+	EventToolUseStart EventType = "tool_use_start"
+
+	// EventToolUseDelta 工具调用过程更新事件
+	// 触发时机：工具调用过程中有增量数据返回时
+	// 典型用途：实时显示工具执行进度或中间结果
+	EventToolUseDelta EventType = "tool_use_delta"
+
+	// EventToolUseStop 工具调用结束事件
+	// 触发时机：工具调用完成时
+	// 典型用途：清理工具资源，更新调用结果状态
+	EventToolUseStop EventType = "tool_use_stop"
+
+	// EventContentDelta 内容增量更新事件
+	// 触发时机：大模型生成回复内容的每个增量片段时
+	// 典型用途：实时显示生成的文本（打字机效果）
+	EventContentDelta EventType = "content_delta"
+
+	// EventThinkingDelta 思维链更新事件
+	// 触发时机：大模型展示内部推理过程时
+	// 典型用途：显示模型的思考过程（增强可解释性）
+	EventThinkingDelta EventType = "thinking_delta"
+
+	// EventSignatureDelta 签名信息更新事件
+	// 触发时机：生成数字签名或验证信息时
+	// 典型用途：安全验证、内容完整性检查
 	EventSignatureDelta EventType = "signature_delta"
-	EventContentStop    EventType = "content_stop"
-	EventComplete       EventType = "complete"
-	EventError          EventType = "error"
-	EventWarning        EventType = "warning"
+
+	// EventContentStop 内容生成结束事件
+	// 触发时机：大模型完成当前轮次的内容生成时
+	// 典型用途：标记内容生成完成，可以进行后续处理
+	EventContentStop EventType = "content_stop"
+
+	// EventComplete 请求完全结束事件
+	// 触发时机：整个API请求处理完成时
+	// 典型用途：清理请求资源，触发回调函数
+	EventComplete EventType = "complete"
+
+	// EventError 错误事件
+	// 触发时机：处理过程中发生错误时
+	// 典型用途：错误处理、重试机制、用户提示
+	EventError EventType = "error"
+
+	// EventWarning 警告事件
+	// 触发时机：处理过程中出现非致命性问题时
+	// 典型用途：警告提示、日志记录、降级处理
+	EventWarning EventType = "warning"
 )
+
+// 事件流典型处理流程示例：
+//
+// 正常对话流程：
+// EventContentStart → EventContentDelta(多次) → EventContentStop → EventComplete
+//
+// 工具调用流程：
+// EventContentStart → EventToolUseStart → EventToolUseDelta → EventToolUseStop
+// → EventContentDelta → EventContentStop → EventComplete
+//
+// 错误处理流程：
+// EventContentStart → EventError → (根据maxRetries重试) → EventComplete
 
 type TokenUsage struct {
 	InputTokens         int64
