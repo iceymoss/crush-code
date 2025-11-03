@@ -234,6 +234,7 @@ func (m *Message) FinishPart() *Finish {
 	return nil
 }
 
+// FinishReason 获取结束原因
 func (m *Message) FinishReason() FinishReason {
 	for _, part := range m.Parts {
 		if c, ok := part.(Finish); ok {

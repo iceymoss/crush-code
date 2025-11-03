@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/crush/internal/llm/provider"
 )
 
+// eventPromptSent 发送一个 PromptSent标记事件
 func (a *agent) eventPromptSent(sessionID string) {
 	event.PromptSent(
 		a.eventCommon(sessionID)...,
@@ -25,6 +26,7 @@ func (a *agent) eventPromptResponded(sessionID string, duration time.Duration) {
 	)
 }
 
+// eventTokensUsed 统计tokens使用情况
 func (a *agent) eventTokensUsed(sessionID string, usage provider.TokenUsage, cost float64) {
 	event.TokensUsed(
 		append(
@@ -39,6 +41,7 @@ func (a *agent) eventTokensUsed(sessionID string, usage provider.TokenUsage, cos
 	)
 }
 
+// eventCommon 获取通用事件属性
 func (a *agent) eventCommon(sessionID string) []any {
 	cfg := config.Get()
 	currentModel := cfg.Models[cfg.Agents["coder"].Model]

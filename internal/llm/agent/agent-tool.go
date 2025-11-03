@@ -10,9 +10,15 @@ import (
 	"github.com/charmbracelet/crush/internal/session"
 )
 
+// agentTool agent工具
 type agentTool struct {
-	agent    Service
+	// 具备agent服务功能
+	agent Service
+
+	// 会话服务
 	sessions session.Service
+
+	// 消息服务
 	messages message.Service
 }
 
@@ -20,14 +26,18 @@ const (
 	AgentToolName = "agent"
 )
 
+// AgentParams 参数
 type AgentParams struct {
+	// Prompt 提示词
 	Prompt string `json:"prompt"`
 }
 
+// Name 获取工具名称
 func (b *agentTool) Name() string {
 	return AgentToolName
 }
 
+// Info 获取工具信息
 func (b *agentTool) Info() tools.ToolInfo {
 	return tools.ToolInfo{
 		Name:        AgentToolName,
@@ -42,8 +52,11 @@ func (b *agentTool) Info() tools.ToolInfo {
 	}
 }
 
+// Run 运行工具
+// call: 工具调用请求参数
 func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolResponse, error) {
 	var params AgentParams
+	// 将参数解析成结构体的提示词，作为agent工具的参数
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return tools.NewTextErrorResponse(fmt.Sprintf("error parsing parameters: %s", err)), nil
 	}
@@ -56,44 +69,56 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 		return tools.ToolResponse{}, fmt.Errorf("session_id and message_id are required")
 	}
 
+	// 创建一个任务子会话
 	session, err := b.sessions.CreateTaskSession(ctx, call.ID, sessionID, "New Agent Session")
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error creating session: %s", err)
 	}
 
+	// 运行 agent ai功能
 	done, err := b.agent.Run(ctx, session.ID, params.Prompt)
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error generating agent: %s", err)
 	}
+
+	// 阻塞等待agent完成
 	result := <-done
 	if result.Error != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error generating agent: %s", result.Error)
 	}
 
+	// 获取结果
 	response := result.Message
 	if response.Role != message.Assistant {
 		return tools.NewTextErrorResponse("no response"), nil
 	}
 
+	// 获取任务子会话
 	updatedSession, err := b.sessions.Get(ctx, session.ID)
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error getting session: %s", err)
 	}
+
+	// 获取父级会话
 	parentSession, err := b.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error getting parent session: %s", err)
 	}
 
+	// 更新父级会话的消耗
 	parentSession.Cost += updatedSession.Cost
 
+	// 保存父级会话
 	_, err = b.sessions.Save(ctx, parentSession)
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error saving parent session: %s", err)
 	}
+
+	// 将处理结果格式化然后返回
 	return tools.NewTextResponse(response.Content().String()), nil
 }
 
-// NewAgentTool 创建一个新的代理工具
+// NewAgentTool 创建 agent 工具
 func NewAgentTool(
 	agent Service,
 	sessions session.Service,
