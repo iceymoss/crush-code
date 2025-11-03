@@ -12,6 +12,9 @@ import (
 	"github.com/posthog/posthog-go"
 )
 
+// 这是一个PostHog客户端，用于发送事件到https://data.charm.land
+// 用于统计crush的使用情况，帮助开发人员了解用户行为
+
 const (
 	endpoint = "https://data.charm.land"
 	key      = "phc_4zt4VgDWLqbYnJYEwLRxFoaTL2noNrQij0C6E8k3I0V"

@@ -26,7 +26,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCPState represents the current state of an MCP client
+// MCPState 表示 MCP 客户端的当前状态
 type MCPState int
 
 const (
@@ -38,28 +38,30 @@ const (
 
 func (s MCPState) String() string {
 	switch s {
-	case MCPStateDisabled:
+	case MCPStateDisabled: // 禁用
 		return "disabled"
-	case MCPStateStarting:
+	case MCPStateStarting: // 开始
 		return "starting"
-	case MCPStateConnected:
+	case MCPStateConnected: // 已连接
 		return "connected"
-	case MCPStateError:
+	case MCPStateError: // 错误
 		return "error"
-	default:
+	default: // 未知
 		return "unknown"
 	}
 }
 
-// MCPEventType represents the type of MCP event
+// MCPEventType 代表MCP事件的类型
 type MCPEventType string
 
 const (
-	MCPEventStateChanged     MCPEventType = "state_changed"
+	// MCPEventStateChanged MCP状态已改变
+	MCPEventStateChanged MCPEventType = "state_changed"
+	// MCPEventToolsListChanged MCP工具已改变
 	MCPEventToolsListChanged MCPEventType = "tools_list_changed"
 )
 
-// MCPEvent represents an event in the MCP system
+// MCPEvent 表示MCP系统中的一个事件
 type MCPEvent struct {
 	Type      MCPEventType
 	Name      string
@@ -68,7 +70,7 @@ type MCPEvent struct {
 	ToolCount int
 }
 
-// MCPClientInfo holds information about an MCP client's state
+// MCPClientInfo 保存有关 MCP 客户端状态的信息
 type MCPClientInfo struct {
 	Name        string
 	State       MCPState
@@ -79,25 +81,46 @@ type MCPClientInfo struct {
 }
 
 var (
-	mcpToolsOnce    sync.Once
-	mcpTools        = csync.NewMap[string, tools.BaseTool]()
+	// mcpToolsOnce 确保工具只被加载一次
+	mcpToolsOnce sync.Once
+
+	// mcpTools 保存MCP工具
+	mcpTools = csync.NewMap[string, tools.BaseTool]()
+
+	// mcpClient2Tools 保存MCP客户端和工具之间的映射
 	mcpClient2Tools = csync.NewMap[string, []tools.BaseTool]()
-	mcpClients      = csync.NewMap[string, *mcp.ClientSession]()
-	mcpStates       = csync.NewMap[string, MCPClientInfo]()
-	mcpBroker       = pubsub.NewBroker[MCPEvent]()
+
+	// mcpClients 存储MCP客户端会话
+	mcpClients = csync.NewMap[string, *mcp.ClientSession]()
+
+	// mcpStates 存储MCP客户端信息
+	mcpStates = csync.NewMap[string, MCPClientInfo]()
+
+	// mcpBroker 订阅MCP事件
+	mcpBroker = pubsub.NewBroker[MCPEvent]()
 )
 
+// McpTool 封装MCP工具
 type McpTool struct {
-	mcpName     string
-	tool        *mcp.Tool
+	// mcpName MCP名称
+	mcpName string
+
+	// tool MCP工具
+	tool *mcp.Tool
+
+	// permissions 权限服务
 	permissions permission.Service
-	workingDir  string
+
+	// workingDir 工具工作目录
+	workingDir string
 }
 
+// Name 返回工具名称
 func (b *McpTool) Name() string {
 	return fmt.Sprintf("mcp_%s_%s", b.mcpName, b.tool.Name)
 }
 
+// Info 返回工具信息
 func (b *McpTool) Info() tools.ToolInfo {
 	parameters := make(map[string]any)
 	required := make([]string, 0)
@@ -127,6 +150,7 @@ func (b *McpTool) Info() tools.ToolInfo {
 	}
 }
 
+// runTool 运行MCP工具, 返回结构化工具执行数据结构
 func runTool(ctx context.Context, name, toolName string, input string) (tools.ToolResponse, error) {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
@@ -156,6 +180,7 @@ func runTool(ctx context.Context, name, toolName string, input string) (tools.To
 	return tools.NewTextResponse(strings.Join(output, "\n")), nil
 }
 
+// getOrRenewClient 获取或重新创建MCP会话
 func getOrRenewClient(ctx context.Context, name string) (*mcp.ClientSession, error) {
 	sess, ok := mcpClients.Get(name)
 	if !ok {

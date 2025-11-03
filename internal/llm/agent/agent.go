@@ -141,6 +141,7 @@ func NewAgent(
 
 	// 如果ai agent是coder，并且agent允许coder工具，则创建coder tool
 	if agentCfg.ID == "coder" && slices.Contains(agentCfg.AllowedTools, AgentToolName) {
+		// 创建coder agent tool
 		agentToolFn = func() (tools.BaseTool, error) {
 			// 创建task agent
 			taskAgentCfg := config.Get().Agents["task"]
@@ -154,7 +155,7 @@ func NewAgent(
 				return nil, fmt.Errorf("failed to create task agent: %w", err)
 			}
 
-			// 创建coder agent tool
+			// 创建coder agent tool,他传入task agent，他是一个处理调用工具的agent
 			return NewAgentTool(taskAgent, sessions, messages), nil
 		}
 	}
@@ -247,8 +248,7 @@ func NewAgent(
 		cwd := cfg.WorkingDir()
 		result := make(map[string]tools.BaseTool)
 
-		// 遍历工具对象列表
-		for _, tool := range []tools.BaseTool{
+		toolList := []tools.BaseTool{
 			tools.NewBashTool(permissions, cwd, cfg.Options.Attribution),
 			tools.NewDownloadTool(permissions, cwd),
 			tools.NewEditTool(lspClients, permissions, history, cwd),
@@ -260,7 +260,10 @@ func NewAgent(
 			tools.NewSourcegraphTool(),
 			tools.NewViewTool(lspClients, permissions, cwd),
 			tools.NewWriteTool(lspClients, permissions, history, cwd),
-		} {
+		}
+
+		// 遍历工具对象列表
+		for _, tool := range toolList {
 			result[tool.Name()] = tool
 		}
 		return result
@@ -754,7 +757,7 @@ loop:
 				} else { // API 错误
 					a.finishMessage(ctx, &assistantMsg, message.FinishReasonError, "API Error", processErr.Error())
 				}
-				// 返回优化后的消息
+
 				return assistantMsg, nil, processErr
 			}
 		case <-ctx.Done(): // 上下文被取消
@@ -830,7 +833,7 @@ loop:
 			var toolResponse tools.ToolResponse
 			var toolErr error
 
-			// 等待工具执行结果和上下文状态
+			// 等待工具执行结果或者上下文状态
 			select {
 			case <-ctx.Done():
 				a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
@@ -883,7 +886,7 @@ loop:
 			}
 		}
 	}
-out: // 上下文被取消
+out:
 	if len(toolResults) == 0 {
 		return assistantMsg, nil, nil
 	}
@@ -901,6 +904,7 @@ out: // 上下文被取消
 		return assistantMsg, nil, fmt.Errorf("failed to create cancelled tool message: %w", err)
 	}
 
+	// 返回优化的消息和工具消息
 	return assistantMsg, &msg, err
 }
 
