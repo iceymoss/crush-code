@@ -215,7 +215,7 @@ func getOrRenewClient(ctx context.Context, name string) (*mcp.ClientSession, err
 	// 错误处理, 重新创建会话
 	updateMCPState(name, MCPStateError, maybeTimeoutErr(err, timeout), nil, state.ToolCount)
 
-	// 创建MCP会话
+	// 创建MCP会话，并且解析配置中的mcp工具
 	sess, err = createMCPSession(ctx, name, m, cfg.Resolver())
 	if err != nil {
 		return nil, err
@@ -355,17 +355,22 @@ func CloseMCPClients() error {
 	return errors.Join(errs...)
 }
 
+// getMCPTools 获取所有 MCP 工具
+//   - cfg: 配置
+//   - permissions: 权限服务
+//   - workingDir: 配置
 func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *config.Config) {
 	var wg sync.WaitGroup
-	// Initialize states for all configured MCPs
+	// 初始化所有配置的 MCP 的状态
 	for name, m := range cfg.MCP {
 		if m.Disabled {
+			// 禁用的 MCP
 			updateMCPState(name, MCPStateDisabled, nil, nil, 0)
 			slog.Debug("skipping disabled mcp", "name", name)
 			continue
 		}
 
-		// Set initial starting state
+		// 设置初始启动状态
 		updateMCPState(name, MCPStateStarting, nil, nil, 0)
 
 		wg.Add(1)
@@ -387,16 +392,20 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 				}
 			}()
 
+			// 设置ctx超时及其取消功能
 			ctx, cancel := context.WithTimeout(ctx, mcpTimeout(m))
 			defer cancel()
 
+			// 创建MCP会话，并解析配置中的mcp工具
 			c, err := createMCPSession(ctx, name, m, cfg.Resolver())
 			if err != nil {
 				return
 			}
 
+			// 保存mcp会话
 			mcpClients.Set(name, c)
 
+			// 获取所有MCP工具
 			tools, err := getTools(ctx, name, permissions, c, cfg.WorkingDir())
 			if err != nil {
 				slog.Error("error listing tools", "error", err)
@@ -405,8 +414,11 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 				return
 			}
 
+			// 将mcp工具保存为全局
 			updateMcpTools(name, tools)
 			mcpClients.Set(name, c)
+
+			// 更新MCP状态
 			updateMCPState(name, MCPStateConnected, nil, c, len(tools))
 		}(name, m)
 	}
@@ -442,7 +454,7 @@ func createMCPSession(ctx context.Context, name string, m config.MCPConfig, reso
 	// 添加一个延迟取消函数
 	cancelTimer := time.AfterFunc(timeout, cancel)
 
-	// 创建 MCP 传输
+	// 创建 MCP 转换，将配置转为cmd执行的命令
 	transport, err := createMCPTransport(mcpCtx, m, resolver)
 	if err != nil {
 		updateMCPState(name, MCPStateError, err, nil, 0)
@@ -522,8 +534,9 @@ func maybeTimeoutErr(err error, timeout time.Duration) error {
 //   - m: MCP配置
 //   - resolver: 配置变量解析器,交给使用者实现解析功能
 func createMCPTransport(ctx context.Context, m config.MCPConfig, resolver config.VariableResolver) (mcp.Transport, error) {
-	switch m.Type {
+	switch m.Type { // 选择连接MCP服务端的方式
 	case config.MCPStdio: // 标准 io
+		// 解析命令，方便后续使用mcp时，执行mcp服务端启动命令
 		command, err := resolver.ResolveValue(m.Command)
 		if err != nil {
 			return nil, fmt.Errorf("invalid mcp command: %w", err)

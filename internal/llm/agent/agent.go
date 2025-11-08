@@ -276,7 +276,9 @@ func NewAgent(
 			slog.Debug("Initialized agent mcp tools", "agent", agentCfg.ID)
 		}()
 
+		// MCP工具为单例模式
 		mcpToolsOnce.Do(func() {
+			// 加载MCP工具
 			doGetMCPTools(ctx, permissions, cfg)
 		})
 
