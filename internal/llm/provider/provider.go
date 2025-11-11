@@ -157,11 +157,13 @@ type ProviderClient interface {
 	Model() catwalk.Model
 }
 
+// baseProvider 描述模型提供者基类
 type baseProvider[C ProviderClient] struct {
 	options providerClientOptions
 	client  C
 }
 
+// cleanMessages 删除无内容的消息
 func (p *baseProvider[C]) cleanMessages(messages []message.Message) (cleaned []message.Message) {
 	for _, msg := range messages {
 		// The message has no content
@@ -173,16 +175,19 @@ func (p *baseProvider[C]) cleanMessages(messages []message.Message) (cleaned []m
 	return cleaned
 }
 
+// SendMessages 发送消息并返回响应
 func (p *baseProvider[C]) SendMessages(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
 	messages = p.cleanMessages(messages)
 	return p.client.send(ctx, messages, tools)
 }
 
+// StreamResponse 模型提供者流式响应
 func (p *baseProvider[C]) StreamResponse(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
 	messages = p.cleanMessages(messages)
 	return p.client.stream(ctx, messages, tools)
 }
 
+// Model 获取模型信息
 func (p *baseProvider[C]) Model() catwalk.Model {
 	return p.client.Model()
 }
