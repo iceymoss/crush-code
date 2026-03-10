@@ -148,6 +148,15 @@ func (app *App) Events() <-chan tea.Msg {
 	return app.events
 }
 
+// SendEvent pushes a message into the application's events channel.
+// It is non-blocking; the message is dropped if the channel is full.
+func (app *App) SendEvent(msg tea.Msg) {
+	select {
+	case app.events <- msg:
+	default:
+	}
+}
+
 // RunNonInteractive runs the application in non-interactive mode with the
 // given prompt, printing to stdout.
 func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, hideSpinner bool) error {

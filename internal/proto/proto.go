@@ -16,6 +16,7 @@ type Workspace struct {
 	YOLO    bool           `json:"yolo,omitempty"`
 	Debug   bool           `json:"debug,omitempty"`
 	DataDir string         `json:"data_dir,omitempty"`
+	Version string         `json:"version,omitempty"`
 	Config  *config.Config `json:"config,omitempty"`
 	Env     []string       `json:"env,omitempty"`
 }

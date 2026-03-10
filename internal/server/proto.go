@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/ui/util"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/google/uuid"
 )
@@ -541,6 +542,16 @@ func (c *controllerV1) handleDeleteWorkspaces(w http.ResponseWriter, r *http.Req
 		ws.App.Shutdown()
 	}
 	c.workspaces.Del(id)
+
+	// When the last workspace is removed, shut down the server.
+	if c.workspaces.Len() == 0 {
+		slog.Info("Last workspace removed, shutting down server...")
+		go func() {
+			if err := c.Shutdown(context.Background()); err != nil {
+				slog.Error("Failed to shutdown server", "error", err)
+			}
+		}()
+	}
 }
 
 func (c *controllerV1) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -618,6 +629,18 @@ func (c *controllerV1) handlePostWorkspaces(w http.ResponseWriter, r *http.Reque
 	}
 
 	c.workspaces.Set(id, ws)
+
+	if args.Version != "" && args.Version != version.Version {
+		slog.Warn("Client/server version mismatch",
+			"client", args.Version,
+			"server", version.Version,
+		)
+		appWorkspace.SendEvent(util.NewWarnMsg(fmt.Sprintf(
+			"Server version %q differs from client version %q. Consider restarting the server.",
+			version.Version, args.Version,
+		)))
+	}
+
 	jsonEncode(w, proto.Workspace{
 		ID:      id,
 		Path:    args.Path,

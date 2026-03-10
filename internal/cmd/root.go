@@ -87,18 +87,51 @@ crush --yolo
 crush --data-dir /path/to/custom/.crush
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		app, err := setupAppWithProgressBar(cmd)
+		hostURL, err := server.ParseHostURL(clientHost)
+		if err != nil {
+			return fmt.Errorf("invalid host URL: %v", err)
+		}
+
+		if err := ensureServer(cmd, hostURL); err != nil {
+			return err
+		}
+
+		appInstance, err := setupAppWithProgressBar(cmd)
 		if err != nil {
 			return err
 		}
-		defer app.Shutdown()
+		defer appInstance.Shutdown()
+
+		// Register the workspace with the server so it tracks active
+		// clients and auto-shuts down when the last one exits.
+		cwd, _ := ResolveCwd(cmd)
+		dataDir, _ := cmd.Flags().GetString("data-dir")
+		debug, _ := cmd.Flags().GetBool("debug")
+		yolo, _ := cmd.Flags().GetBool("yolo")
+
+		c, err := client.NewClient(cwd, hostURL.Scheme, hostURL.Host)
+		if err != nil {
+			return fmt.Errorf("failed to create client: %v", err)
+		}
+
+		ws, err := c.CreateWorkspace(cmd.Context(), proto.Workspace{
+			Path:    cwd,
+			DataDir: dataDir,
+			Debug:   debug,
+			YOLO:    yolo,
+			Version: version.Version,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to register workspace: %v", err)
+		}
+		defer func() { _ = c.DeleteWorkspace(cmd.Context(), ws.ID) }()
 
 		event.AppInitialized()
 
 		// Set up the TUI.
 		var env uv.Environ = os.Environ()
 
-		com := common.DefaultCommon(app)
+		com := common.DefaultCommon(appInstance)
 		model := ui.New(com)
 
 		program := tea.NewProgram(
@@ -107,7 +140,7 @@ crush --data-dir /path/to/custom/.crush
 			tea.WithContext(cmd.Context()),
 			tea.WithFilter(ui.MouseEventFilter), // Filter mouse events based on focus state
 		)
-		go app.Subscribe(program)
+		go appInstance.Subscribe(program)
 
 		if _, err := program.Run(); err != nil {
 			event.Error(err)
@@ -283,7 +316,8 @@ func setupClientApp(cmd *cobra.Command, hostURL *url.URL) (*client.Client, *prot
 }
 
 // ensureServer auto-starts a detached server if the socket file does not
-// exist.
+// exist. When connecting to an existing server, it waits for the health
+// endpoint to respond.
 func ensureServer(cmd *cobra.Command, hostURL *url.URL) error {
 	switch hostURL.Scheme {
 	case "unix", "npipe":
@@ -308,9 +342,8 @@ func ensureServer(cmd *cobra.Command, hostURL *url.URL) error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize crush server: %v", err)
 		}
-	default:
-		// TCP: assume server is already running.
 	}
+
 	return nil
 }
 
