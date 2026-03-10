@@ -57,7 +57,10 @@ func (m *UI) initializeProject() tea.Cmd {
 	initialize := func() tea.Msg {
 		initPrompt, err := agent.InitializePrompt(*cfg)
 		if err != nil {
-			return util.InfoMsg{Type: util.InfoTypeError, Msg: err.Error()}
+			return util.InfoMsg{
+				Type: util.InfoTypeError,
+				Msg:  fmt.Sprintf("Failed to initialize project: %v", err),
+			}
 		}
 		return sendMessageMsg{Content: initPrompt}
 	}

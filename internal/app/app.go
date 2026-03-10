@@ -143,6 +143,11 @@ func (app *App) Config() *config.Config {
 	return app.config
 }
 
+// Events returns the events channel for the application.
+func (app *App) Events() <-chan tea.Msg {
+	return app.events
+}
+
 // RunNonInteractive runs the application in non-interactive mode with the
 // given prompt, printing to stdout.
 func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, hideSpinner bool) error {

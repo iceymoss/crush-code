@@ -740,6 +740,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case util.InfoMsg:
+		if msg.Type == util.InfoTypeError {
+			slog.Error("Error reported", "error", msg.Msg)
+		}
 		m.status.SetInfoMsg(msg)
 		ttl := msg.TTL
 		if ttl <= 0 {
@@ -2753,7 +2756,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 			}
 			return util.InfoMsg{
 				Type: util.InfoTypeError,
-				Msg:  err.Error(),
+				Msg:  fmt.Sprintf("Failed to run agent: %v", err),
 			}
 		}
 		return nil
