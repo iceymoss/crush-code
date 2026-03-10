@@ -1,28 +1,19 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
 
-	"github.com/charmbracelet/crush/internal/app"
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/db"
-	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/backend"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/session"
-	"github.com/charmbracelet/crush/internal/ui/util"
-	"github.com/charmbracelet/crush/internal/version"
-	"github.com/google/uuid"
 )
 
 type controllerV1 struct {
-	*Server
+	backend *backend.Backend
+	server  *Server
 }
 
 func (c *controllerV1) handleGetHealth(w http.ResponseWriter, _ *http.Request) {
@@ -30,468 +21,92 @@ func (c *controllerV1) handleGetHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (c *controllerV1) handleGetVersion(w http.ResponseWriter, _ *http.Request) {
-	jsonEncode(w, proto.VersionInfo{
-		Version:   version.Version,
-		Commit:    version.Commit,
-		GoVersion: runtime.Version(),
-		Platform:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-	})
+	jsonEncode(w, c.backend.VersionInfo())
 }
 
 func (c *controllerV1) handlePostControl(w http.ResponseWriter, r *http.Request) {
 	var req proto.ServerControl
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.logError(r, "Failed to decode request", "error", err)
+		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
 		return
 	}
 
 	switch req.Command {
 	case "shutdown":
-		go func() {
-			slog.Info("Shutting down server...")
-			if err := c.Shutdown(context.Background()); err != nil {
-				slog.Error("Failed to shutdown server", "error", err)
-			}
-		}()
+		c.backend.Shutdown()
 	default:
-		c.logError(r, "Unknown command", "command", req.Command)
+		c.server.logError(r, "Unknown command", "command", req.Command)
 		jsonError(w, http.StatusBadRequest, "unknown command")
 		return
 	}
 }
 
 func (c *controllerV1) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
-	jsonEncode(w, c.cfg)
+	jsonEncode(w, c.backend.Config())
 }
 
 func (c *controllerV1) handleGetWorkspaces(w http.ResponseWriter, _ *http.Request) {
-	workspaces := []proto.Workspace{}
-	for _, ws := range c.workspaces.Seq2() {
-		workspaces = append(workspaces, proto.Workspace{
-			ID:      ws.id,
-			Path:    ws.path,
-			YOLO:    ws.cfg.Permissions != nil && ws.cfg.Permissions.SkipRequests,
-			DataDir: ws.cfg.Options.DataDirectory,
-			Debug:   ws.cfg.Options.Debug,
-			Config:  ws.cfg,
-		})
-	}
-	jsonEncode(w, workspaces)
+	jsonEncode(w, c.backend.ListWorkspaces())
 }
 
-func (c *controllerV1) handleGetWorkspaceLSPDiagnostics(w http.ResponseWriter, r *http.Request) {
+func (c *controllerV1) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	lspName := r.PathValue("lsp")
-	var found bool
-	for name, client := range ws.LSPManager.Clients().Seq2() {
-		if name == lspName {
-			diagnostics := client.GetDiagnostics()
-			jsonEncode(w, diagnostics)
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		c.logError(r, "LSP client not found", "id", id, "lsp", lspName)
-		jsonError(w, http.StatusNotFound, "LSP client not found")
-	}
-}
-
-func (c *controllerV1) handleGetWorkspaceLSPs(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	_, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	lspClients := app.GetLSPStates()
-	jsonEncode(w, lspClients)
-}
-
-func (c *controllerV1) handleGetWorkspaceAgentSessionPromptQueued(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	queued := ws.App.AgentCoordinator.QueuedPrompts(sid)
-	jsonEncode(w, queued)
-}
-
-func (c *controllerV1) handlePostWorkspaceAgentSessionPromptClear(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	ws.App.AgentCoordinator.ClearQueue(sid)
-	w.WriteHeader(http.StatusOK)
-}
-
-func (c *controllerV1) handleGetWorkspaceAgentSessionSummarize(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	if err := ws.App.AgentCoordinator.Summarize(r.Context(), sid); err != nil {
-		c.logError(r, "Failed to summarize session", "error", err, "id", id, "sid", sid)
-		jsonError(w, http.StatusInternalServerError, "failed to summarize session")
-		return
-	}
-}
-
-func (c *controllerV1) handlePostWorkspaceAgentSessionCancel(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	if ws.App.AgentCoordinator != nil {
-		ws.App.AgentCoordinator.Cancel(sid)
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func (c *controllerV1) handleGetWorkspaceAgentSession(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	se, err := ws.App.Sessions.Get(r.Context(), sid)
+	ws, err := c.backend.GetWorkspaceProto(id)
 	if err != nil {
-		c.logError(r, "Failed to get session", "error", err, "id", id, "sid", sid)
-		jsonError(w, http.StatusInternalServerError, "failed to get session")
+		c.handleError(w, r, err)
 		return
 	}
-
-	var isSessionBusy bool
-	if ws.App.AgentCoordinator != nil {
-		isSessionBusy = ws.App.AgentCoordinator.IsSessionBusy(sid)
-	}
-
-	jsonEncode(w, proto.AgentSession{
-		Session: proto.Session{
-			ID:    se.ID,
-			Title: se.Title,
-		},
-		IsBusy: isSessionBusy,
-	})
+	jsonEncode(w, ws)
 }
 
-func (c *controllerV1) handlePostWorkspaceAgent(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	w.Header().Set("Accept", "application/json")
-
-	var msg proto.AgentMessage
-	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
-		c.logError(r, "Failed to decode request", "error", err)
-		jsonError(w, http.StatusBadRequest, "failed to decode request")
-		return
-	}
-
-	if ws.App.AgentCoordinator == nil {
-		c.logError(r, "Agent coordinator not initialized", "id", id)
-		jsonError(w, http.StatusBadRequest, "agent coordinator not initialized")
-		return
-	}
-
-	if _, err := ws.App.AgentCoordinator.Run(c.ctx, msg.SessionID, msg.Prompt); err != nil {
-		c.logError(r, "Failed to enqueue message", "error", err, "id", id, "sid", msg.SessionID)
-		jsonError(w, http.StatusInternalServerError, "failed to enqueue message")
-		return
-	}
-}
-
-func (c *controllerV1) handleGetWorkspaceAgent(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	var agentInfo proto.AgentInfo
-	if ws.App.AgentCoordinator != nil {
-		m := ws.App.AgentCoordinator.Model()
-		agentInfo = proto.AgentInfo{
-			Model:  m.CatwalkCfg,
-			IsBusy: ws.App.AgentCoordinator.IsBusy(),
-		}
-	}
-	jsonEncode(w, agentInfo)
-}
-
-func (c *controllerV1) handlePostWorkspaceAgentUpdate(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	if err := ws.App.UpdateAgentModel(r.Context()); err != nil {
-		c.logError(r, "Failed to update agent model", "error", err)
-		jsonError(w, http.StatusInternalServerError, "failed to update agent model")
-		return
-	}
-}
-
-func (c *controllerV1) handlePostWorkspaceAgentInit(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	if err := ws.App.InitCoderAgent(r.Context()); err != nil {
-		c.logError(r, "Failed to initialize coder agent", "error", err)
-		jsonError(w, http.StatusInternalServerError, "failed to initialize coder agent")
-		return
-	}
-}
-
-func (c *controllerV1) handleGetWorkspaceSessionHistory(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	historyItems, err := ws.App.History.ListBySession(r.Context(), sid)
-	if err != nil {
-		c.logError(r, "Failed to list history", "error", err, "id", id, "sid", sid)
-		jsonError(w, http.StatusInternalServerError, "failed to list history")
-		return
-	}
-
-	jsonEncode(w, historyItems)
-}
-
-func (c *controllerV1) handleGetWorkspaceSessionMessages(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	messages, err := ws.App.Messages.List(r.Context(), sid)
-	if err != nil {
-		c.logError(r, "Failed to list messages", "error", err, "id", id, "sid", sid)
-		jsonError(w, http.StatusInternalServerError, "failed to list messages")
-		return
-	}
-
-	jsonEncode(w, messages)
-}
-
-func (c *controllerV1) handleGetWorkspaceSession(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	sid := r.PathValue("sid")
-	sess, err := ws.App.Sessions.Get(r.Context(), sid)
-	if err != nil {
-		c.logError(r, "Failed to get session", "error", err, "id", id, "sid", sid)
-		jsonError(w, http.StatusInternalServerError, "failed to get session")
-		return
-	}
-
-	jsonEncode(w, sess)
-}
-
-func (c *controllerV1) handlePostWorkspaceSessions(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	var args session.Session
+func (c *controllerV1) handlePostWorkspaces(w http.ResponseWriter, r *http.Request) {
+	var args proto.Workspace
 	if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
-		c.logError(r, "Failed to decode request", "error", err)
+		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
 		return
 	}
 
-	sess, err := ws.App.Sessions.Create(r.Context(), args.Title)
+	_, result, err := c.backend.CreateWorkspace(args)
 	if err != nil {
-		c.logError(r, "Failed to create session", "error", err, "id", id)
-		jsonError(w, http.StatusInternalServerError, "failed to create session")
+		c.handleError(w, r, err)
 		return
 	}
-
-	jsonEncode(w, sess)
+	jsonEncode(w, result)
 }
 
-func (c *controllerV1) handleGetWorkspaceSessions(w http.ResponseWriter, r *http.Request) {
+func (c *controllerV1) handleDeleteWorkspaces(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
+	c.backend.DeleteWorkspace(id)
+}
 
-	sessions, err := ws.App.Sessions.List(r.Context())
+func (c *controllerV1) handleGetWorkspaceConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cfg, err := c.backend.GetWorkspaceConfig(id)
 	if err != nil {
-		c.logError(r, "Failed to list sessions", "error", err)
-		jsonError(w, http.StatusInternalServerError, "failed to list sessions")
+		c.handleError(w, r, err)
 		return
 	}
-
-	jsonEncode(w, sessions)
-}
-
-func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	var req proto.PermissionGrant
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.logError(r, "Failed to decode request", "error", err)
-		jsonError(w, http.StatusBadRequest, "failed to decode request")
-		return
-	}
-
-	perm := permission.PermissionRequest{
-		ID:          req.Permission.ID,
-		SessionID:   req.Permission.SessionID,
-		ToolCallID:  req.Permission.ToolCallID,
-		ToolName:    req.Permission.ToolName,
-		Description: req.Permission.Description,
-		Action:      req.Permission.Action,
-		Params:      req.Permission.Params,
-		Path:        req.Permission.Path,
-	}
-
-	switch req.Action {
-	case proto.PermissionAllow:
-		ws.App.Permissions.Grant(perm)
-	case proto.PermissionAllowForSession:
-		ws.App.Permissions.GrantPersistent(perm)
-	case proto.PermissionDeny:
-		ws.App.Permissions.Deny(perm)
-	default:
-		c.logError(r, "Invalid permission action", "action", req.Action)
-		jsonError(w, http.StatusBadRequest, "invalid permission action")
-		return
-	}
-}
-
-func (c *controllerV1) handlePostWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	var req proto.PermissionSkipRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.logError(r, "Failed to decode request", "error", err)
-		jsonError(w, http.StatusBadRequest, "failed to decode request")
-		return
-	}
-
-	ws.App.Permissions.SetSkipRequests(req.Skip)
-}
-
-func (c *controllerV1) handleGetWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
-		return
-	}
-
-	skip := ws.App.Permissions.SkipRequests()
-	jsonEncode(w, proto.PermissionSkipRequest{Skip: skip})
+	jsonEncode(w, cfg)
 }
 
 func (c *controllerV1) handleGetWorkspaceProviders(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
+	providers, err := c.backend.GetWorkspaceProviders(id)
+	if err != nil {
+		c.handleError(w, r, err)
 		return
 	}
-
-	providers, _ := config.Providers(ws.cfg)
 	jsonEncode(w, providers)
 }
 
 func (c *controllerV1) handleGetWorkspaceEvents(w http.ResponseWriter, r *http.Request) {
 	flusher := http.NewResponseController(w)
 	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
+	events, err := c.backend.SubscribeEvents(id)
+	if err != nil {
+		c.handleError(w, r, err)
 		return
 	}
 
@@ -499,21 +114,19 @@ func (c *controllerV1) handleGetWorkspaceEvents(w http.ResponseWriter, r *http.R
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	events := ws.App.Events()
-
 	for {
 		select {
 		case <-r.Context().Done():
-			c.logDebug(r, "Stopping event stream")
+			c.server.logDebug(r, "Stopping event stream")
 			return
 		case ev, ok := <-events:
 			if !ok {
 				return
 			}
-			c.logDebug(r, "Sending event", "event", fmt.Sprintf("%T %+v", ev, ev))
+			c.server.logDebug(r, "Sending event", "event", fmt.Sprintf("%T %+v", ev, ev))
 			data, err := json.Marshal(ev)
 			if err != nil {
-				c.logError(r, "Failed to marshal event", "error", err)
+				c.server.logError(r, "Failed to marshal event", "error", err)
 				continue
 			}
 
@@ -523,148 +136,245 @@ func (c *controllerV1) handleGetWorkspaceEvents(w http.ResponseWriter, r *http.R
 	}
 }
 
-func (c *controllerV1) handleGetWorkspaceConfig(w http.ResponseWriter, r *http.Request) {
+func (c *controllerV1) handleGetWorkspaceLSPs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
+	states, err := c.backend.GetLSPStates(id)
+	if err != nil {
+		c.handleError(w, r, err)
 		return
 	}
-
-	jsonEncode(w, ws.cfg)
+	jsonEncode(w, states)
 }
 
-func (c *controllerV1) handleDeleteWorkspaces(w http.ResponseWriter, r *http.Request) {
+func (c *controllerV1) handleGetWorkspaceLSPDiagnostics(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if ok {
-		ws.App.Shutdown()
-	}
-	c.workspaces.Del(id)
-
-	// When the last workspace is removed, shut down the server.
-	if c.workspaces.Len() == 0 {
-		slog.Info("Last workspace removed, shutting down server...")
-		go func() {
-			if err := c.Shutdown(context.Background()); err != nil {
-				slog.Error("Failed to shutdown server", "error", err)
-			}
-		}()
-	}
-}
-
-func (c *controllerV1) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ws, ok := c.workspaces.Get(id)
-	if !ok {
-		c.logError(r, "Workspace not found", "id", id)
-		jsonError(w, http.StatusNotFound, "workspace not found")
+	lspName := r.PathValue("lsp")
+	diagnostics, err := c.backend.GetLSPDiagnostics(id, lspName)
+	if err != nil {
+		c.handleError(w, r, err)
 		return
 	}
-
-	jsonEncode(w, proto.Workspace{
-		ID:      ws.id,
-		Path:    ws.path,
-		YOLO:    ws.cfg.Permissions != nil && ws.cfg.Permissions.SkipRequests,
-		DataDir: ws.cfg.Options.DataDirectory,
-		Debug:   ws.cfg.Options.Debug,
-		Config:  ws.cfg,
-	})
+	jsonEncode(w, diagnostics)
 }
 
-func (c *controllerV1) handlePostWorkspaces(w http.ResponseWriter, r *http.Request) {
-	var args proto.Workspace
+func (c *controllerV1) handleGetWorkspaceSessions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sessions, err := c.backend.ListSessions(r.Context(), id)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, sessions)
+}
+
+func (c *controllerV1) handlePostWorkspaceSessions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var args session.Session
 	if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
-		c.logError(r, "Failed to decode request", "error", err)
+		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
 		return
 	}
 
-	if args.Path == "" {
-		c.logError(r, "Path is required")
-		jsonError(w, http.StatusBadRequest, "path is required")
-		return
-	}
-
-	id := uuid.New().String()
-	cfg, err := config.Init(args.Path, args.DataDir, args.Debug)
+	sess, err := c.backend.CreateSession(r.Context(), id, args.Title)
 	if err != nil {
-		c.logError(r, "Failed to initialize config", "error", err)
-		jsonError(w, http.StatusBadRequest, fmt.Sprintf("failed to initialize config: %v", err))
+		c.handleError(w, r, err)
 		return
 	}
-
-	if cfg.Permissions == nil {
-		cfg.Permissions = &config.Permissions{}
-	}
-	cfg.Permissions.SkipRequests = args.YOLO
-
-	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
-		c.logError(r, "Failed to create data directory", "error", err)
-		jsonError(w, http.StatusInternalServerError, "failed to create data directory")
-		return
-	}
-
-	conn, err := db.Connect(c.ctx, cfg.Options.DataDirectory)
-	if err != nil {
-		c.logError(r, "Failed to connect to database", "error", err)
-		jsonError(w, http.StatusInternalServerError, "failed to connect to database")
-		return
-	}
-
-	appWorkspace, err := app.New(c.ctx, conn, cfg)
-	if err != nil {
-		slog.Error("Failed to create app workspace", "error", err)
-		jsonError(w, http.StatusInternalServerError, "failed to create app workspace")
-		return
-	}
-
-	ws := &Workspace{
-		App:  appWorkspace,
-		id:   id,
-		path: args.Path,
-		cfg:  cfg,
-		env:  args.Env,
-	}
-
-	c.workspaces.Set(id, ws)
-
-	if args.Version != "" && args.Version != version.Version {
-		slog.Warn("Client/server version mismatch",
-			"client", args.Version,
-			"server", version.Version,
-		)
-		appWorkspace.SendEvent(util.NewWarnMsg(fmt.Sprintf(
-			"Server version %q differs from client version %q. Consider restarting the server.",
-			version.Version, args.Version,
-		)))
-	}
-
-	jsonEncode(w, proto.Workspace{
-		ID:      id,
-		Path:    args.Path,
-		DataDir: cfg.Options.DataDirectory,
-		Debug:   cfg.Options.Debug,
-		YOLO:    cfg.Permissions.SkipRequests,
-		Config:  cfg,
-		Env:     args.Env,
-	})
+	jsonEncode(w, sess)
 }
 
-func createDotCrushDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("failed to create data directory: %q %w", dir, err)
+func (c *controllerV1) handleGetWorkspaceSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	sess, err := c.backend.GetSession(r.Context(), id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, sess)
+}
+
+func (c *controllerV1) handleGetWorkspaceSessionHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	history, err := c.backend.ListSessionHistory(r.Context(), id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, history)
+}
+
+func (c *controllerV1) handleGetWorkspaceSessionMessages(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	messages, err := c.backend.ListSessionMessages(r.Context(), id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, messages)
+}
+
+func (c *controllerV1) handleGetWorkspaceAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	info, err := c.backend.GetAgentInfo(id)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, info)
+}
+
+func (c *controllerV1) handlePostWorkspaceAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	w.Header().Set("Accept", "application/json")
+
+	var msg proto.AgentMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
 	}
 
-	gitIgnorePath := filepath.Join(dir, ".gitignore")
-	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
-		if err := os.WriteFile(gitIgnorePath, []byte("*\n"), 0o644); err != nil {
-			return fmt.Errorf("failed to create .gitignore file: %q %w", gitIgnorePath, err)
-		}
+	if err := c.backend.SendMessage(r.Context(), id, msg); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+}
+
+func (c *controllerV1) handlePostWorkspaceAgentInit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := c.backend.InitAgent(r.Context(), id); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+}
+
+func (c *controllerV1) handlePostWorkspaceAgentUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := c.backend.UpdateAgent(r.Context(), id); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+}
+
+func (c *controllerV1) handleGetWorkspaceAgentSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	agentSession, err := c.backend.GetAgentSession(r.Context(), id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, agentSession)
+}
+
+func (c *controllerV1) handlePostWorkspaceAgentSessionCancel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if err := c.backend.CancelSession(id, sid); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *controllerV1) handleGetWorkspaceAgentSessionPromptQueued(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	queued, err := c.backend.QueuedPrompts(id, sid)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, queued)
+}
+
+func (c *controllerV1) handlePostWorkspaceAgentSessionPromptClear(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if err := c.backend.ClearQueue(id, sid); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *controllerV1) handleGetWorkspaceAgentSessionSummarize(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if err := c.backend.SummarizeSession(r.Context(), id, sid); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+}
+
+func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req proto.PermissionGrant
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
 	}
 
-	return nil
+	if err := c.backend.GrantPermission(id, req); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+}
+
+func (c *controllerV1) handlePostWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req proto.PermissionSkipRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.SetPermissionsSkip(id, req.Skip); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+}
+
+func (c *controllerV1) handleGetWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	skip, err := c.backend.GetPermissionsSkip(id)
+	if err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	jsonEncode(w, proto.PermissionSkipRequest{Skip: skip})
+}
+
+// handleError maps backend errors to HTTP status codes and writes the
+// JSON error response.
+func (c *controllerV1) handleError(w http.ResponseWriter, r *http.Request, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, backend.ErrWorkspaceNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, backend.ErrLSPClientNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, backend.ErrAgentNotInitialized):
+		status = http.StatusBadRequest
+	case errors.Is(err, backend.ErrPathRequired):
+		status = http.StatusBadRequest
+	case errors.Is(err, backend.ErrInvalidPermissionAction):
+		status = http.StatusBadRequest
+	case errors.Is(err, backend.ErrUnknownCommand):
+		status = http.StatusBadRequest
+	}
+	c.server.logError(r, err.Error())
+	jsonError(w, status, err.Error())
 }
 
 func jsonEncode(w http.ResponseWriter, v any) {

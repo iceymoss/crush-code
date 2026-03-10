@@ -11,24 +11,12 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/charmbracelet/crush/internal/app"
+	"github.com/charmbracelet/crush/internal/backend"
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/csync"
 )
 
 // ErrServerClosed is returned when the server is closed.
 var ErrServerClosed = http.ErrServerClosed
-
-// Workspace represents a running [app.App] workspace with its associated
-// resources and state.
-type Workspace struct {
-	*app.App
-	ln   net.Listener
-	cfg  *config.Config
-	id   string
-	path string
-	env  []string
-}
 
 // ParseHostURL parses a host URL into a [url.URL].
 func ParseHostURL(host string) (*url.URL, error) {
@@ -72,14 +60,11 @@ type Server struct {
 	Addr    string
 	network string
 
-	h   *http.Server
-	ln  net.Listener
-	ctx context.Context
+	h  *http.Server
+	ln net.Listener
 
-	// workspaces is a map of running applications managed by the server.
-	workspaces *csync.Map[string, *Workspace]
-	cfg        *config.Config
-	logger     *slog.Logger
+	backend *backend.Backend
+	logger  *slog.Logger
 }
 
 // SetLogger sets the logger for the server.
@@ -101,14 +86,23 @@ func NewServer(cfg *config.Config, network, address string) *Server {
 	s := new(Server)
 	s.Addr = address
 	s.network = network
-	s.cfg = cfg
-	s.workspaces = csync.NewMap[string, *Workspace]()
-	s.ctx = context.Background()
+
+	// The backend is created with a shutdown callback that triggers
+	// a graceful server shutdown (e.g. when the last workspace is
+	// removed).
+	s.backend = backend.New(context.Background(), cfg, func() {
+		go func() {
+			slog.Info("Shutting down server...")
+			if err := s.Shutdown(context.Background()); err != nil {
+				slog.Error("Failed to shutdown server", "error", err)
+			}
+		}()
+	})
 
 	var p http.Protocols
 	p.SetHTTP1(true)
 	p.SetUnencryptedHTTP2(true)
-	c := &controllerV1{Server: s}
+	c := &controllerV1{backend: s.backend, server: s}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", c.handleGetHealth)
 	mux.HandleFunc("GET /v1/version", c.handleGetVersion)
