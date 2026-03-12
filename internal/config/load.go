@@ -792,6 +792,15 @@ func GlobalConfigData() string {
 	return filepath.Join(home.Dir(), ".local", "share", appName, fmt.Sprintf("%s.json", appName))
 }
 
+// GlobalWorkspaceDir returns the path to the global server workspace
+// directory. This directory acts as a meta-workspace for the server
+// process, giving it a real workingDir so that config loading, scoped
+// writes, and provider resolution behave identically to project
+// workspaces.
+func GlobalWorkspaceDir() string {
+	return filepath.Dir(GlobalConfigData())
+}
+
 func assignIfNil[T any](ptr **T, val T) {
 	if *ptr == nil {
 		*ptr = &val

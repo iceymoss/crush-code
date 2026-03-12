@@ -240,11 +240,8 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 		return nil, err
 	}
 
+	store.Overrides().SkipPermissionRequests = yolo
 	cfg := store.Config()
-	if cfg.Permissions == nil {
-		cfg.Permissions = &config.Permissions{}
-	}
-	cfg.Permissions.SkipRequests = yolo
 
 	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
 		return nil, err
