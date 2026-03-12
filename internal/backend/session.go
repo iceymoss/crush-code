@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 
+	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/session"
 )
@@ -65,7 +66,7 @@ func (b *Backend) GetAgentSession(ctx context.Context, workspaceID, sessionID st
 }
 
 // ListSessionMessages returns all messages for a session.
-func (b *Backend) ListSessionMessages(ctx context.Context, workspaceID, sessionID string) (any, error) {
+func (b *Backend) ListSessionMessages(ctx context.Context, workspaceID, sessionID string) ([]message.Message, error) {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return nil, err
@@ -82,4 +83,44 @@ func (b *Backend) ListSessionHistory(ctx context.Context, workspaceID, sessionID
 	}
 
 	return ws.History.ListBySession(ctx, sessionID)
+}
+
+// SaveSession updates a session in the given workspace.
+func (b *Backend) SaveSession(ctx context.Context, workspaceID string, sess session.Session) (session.Session, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return session.Session{}, err
+	}
+
+	return ws.Sessions.Save(ctx, sess)
+}
+
+// DeleteSession deletes a session from the given workspace.
+func (b *Backend) DeleteSession(ctx context.Context, workspaceID, sessionID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	return ws.Sessions.Delete(ctx, sessionID)
+}
+
+// ListUserMessages returns user-role messages for a session.
+func (b *Backend) ListUserMessages(ctx context.Context, workspaceID, sessionID string) ([]message.Message, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return ws.Messages.ListUserMessages(ctx, sessionID)
+}
+
+// ListAllUserMessages returns all user-role messages across sessions.
+func (b *Backend) ListAllUserMessages(ctx context.Context, workspaceID string) ([]message.Message, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return ws.Messages.ListAllUserMessages(ctx)
 }

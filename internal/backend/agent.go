@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/proto"
 )
 
@@ -33,8 +34,10 @@ func (b *Backend) GetAgentInfo(workspaceID string) (proto.AgentInfo, error) {
 	if ws.AgentCoordinator != nil {
 		m := ws.AgentCoordinator.Model()
 		agentInfo = proto.AgentInfo{
-			Model:  m.CatwalkCfg,
-			IsBusy: ws.AgentCoordinator.IsBusy(),
+			Model:    m.CatwalkCfg,
+			ModelCfg: m.ModelCfg,
+			IsBusy:   ws.AgentCoordinator.IsBusy(),
+			IsReady:  true,
 		}
 	}
 	return agentInfo, nil
@@ -113,4 +116,29 @@ func (b *Backend) ClearQueue(workspaceID, sessionID string) error {
 		ws.AgentCoordinator.ClearQueue(sessionID)
 	}
 	return nil
+}
+
+// QueuedPromptsList returns the list of queued prompt strings for a
+// session.
+func (b *Backend) QueuedPromptsList(workspaceID, sessionID string) ([]string, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return nil, nil
+	}
+
+	return ws.AgentCoordinator.QueuedPromptsList(sessionID), nil
+}
+
+// GetDefaultSmallModel returns the default small model for a provider.
+func (b *Backend) GetDefaultSmallModel(workspaceID, providerID string) (config.SelectedModel, error) {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return config.SelectedModel{}, err
+	}
+
+	return ws.GetDefaultSmallModel(providerID), nil
 }

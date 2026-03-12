@@ -28,7 +28,6 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
-	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/commands"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/fsext"
@@ -50,6 +49,7 @@ import (
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/ui/util"
 	"github.com/charmbracelet/crush/internal/version"
+	"github.com/charmbracelet/crush/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/charmbracelet/ultraviolet/screen"
@@ -195,7 +195,7 @@ type UI struct {
 	}
 
 	// lsp
-	lspStates map[string]app.LSPClientInfo
+	lspStates map[string]workspace.LSPClientInfo
 
 	// mcp
 	mcpStates map[string]mcp.ClientInfo
@@ -294,7 +294,7 @@ func New(com *common.Common) *UI {
 		completions:         comp,
 		attachments:         attachments,
 		todoSpinner:         todoSpinner,
-		lspStates:           make(map[string]app.LSPClientInfo),
+		lspStates:           make(map[string]workspace.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
@@ -317,7 +317,7 @@ func New(com *common.Common) *UI {
 	desiredFocus := uiFocusEditor
 	if !com.Config().IsConfigured() {
 		desiredState = uiOnboarding
-	} else if n, _ := config.ProjectNeedsInitialization(com.Store()); n {
+	} else if n, _ := com.Workspace.ProjectNeedsInitialization(); n {
 		desiredState = uiInitialize
 	}
 
@@ -415,7 +415,7 @@ func (m *UI) loadMCPrompts() tea.Msg {
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
-		queueSize := m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID)
+		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
 		if queueSize != m.promptQueue {
 			m.promptQueue = queueSize
 			m.updateLayoutAndSize()
@@ -450,7 +450,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sessionFiles = msg.files
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
-		msgs, err := m.com.App.Messages.List(context.Background(), m.session.ID)
+		msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
 		if err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
@@ -567,8 +567,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderPills()
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
-	case pubsub.Event[app.LSPEvent]:
-		m.lspStates = app.GetLSPStates()
+	case pubsub.Event[workspace.LSPEvent]:
+		m.lspStates = m.com.Workspace.LSPGetStates()
 	case pubsub.Event[mcp.Event]:
 		switch msg.Payload.Type {
 		case mcp.EventStateChanged:
@@ -577,11 +577,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loadMCPrompts,
 			)
 		case mcp.EventPromptsListChanged:
-			return m, handleMCPPromptsEvent(msg.Payload.Name)
+			return m, handleMCPPromptsEvent(m.com.Workspace, msg.Payload.Name)
 		case mcp.EventToolsListChanged:
-			return m, handleMCPToolsEvent(m.com.Store(), msg.Payload.Name)
+			return m, handleMCPToolsEvent(m.com.Workspace, msg.Payload.Name)
 		case mcp.EventResourcesListChanged:
-			return m, handleMCPResourcesEvent(msg.Payload.Name)
+			return m, handleMCPResourcesEvent(m.com.Workspace, msg.Payload.Name)
 		}
 	case pubsub.Event[permission.PermissionRequest]:
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {
@@ -830,7 +830,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
 		}
-		if m.com.App.Permissions.SkipRequests() {
+		if m.com.Workspace.PermissionSkipRequests() {
 			m.textarea.Placeholder = "Yolo mode!"
 		}
 	}
@@ -909,10 +909,10 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		messageID := toolItem.MessageID()
 
 		// Get the agent tool session ID.
-		agentSessionID := m.com.App.Sessions.CreateAgentToolSessionID(messageID, tc.ID)
+		agentSessionID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
 
 		// Fetch nested messages.
-		nestedMsgs, err := m.com.App.Messages.List(context.Background(), agentSessionID)
+		nestedMsgs, err := m.com.Workspace.ListMessages(context.Background(), agentSessionID)
 		if err != nil || len(nestedMsgs) == 0 {
 			continue
 		}
@@ -1114,7 +1114,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Check if this is an agent tool session and parse it.
 	childSessionID := event.Payload.SessionID
-	_, toolCallID, ok := m.com.App.Sessions.ParseAgentToolSessionID(childSessionID)
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
 	if !ok {
 		return nil
 	}
@@ -1246,8 +1246,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	// Command dialog messages
 	case dialog.ActionToggleYoloMode:
-		yolo := !m.com.App.Permissions.SkipRequests()
-		m.com.App.Permissions.SetSkipRequests(yolo)
+		yolo := !m.com.Workspace.PermissionSkipRequests()
+		m.com.Workspace.PermissionSetSkipRequests(yolo)
 		m.setEditorPrompt(yolo)
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
@@ -1265,7 +1265,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, func() tea.Msg {
-			err := m.com.App.AgentCoordinator.Summarize(context.Background(), msg.SessionID)
+			err := m.com.Workspace.AgentSummarize(context.Background(), msg.SessionID)
 			if err != nil {
 				return util.ReportError(err)()
 			}
@@ -1304,10 +1304,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 			currentModel := cfg.Models[agentCfg.Model]
 			currentModel.Think = !currentModel.Think
-			if err := m.com.Store().UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
+			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
 				return util.ReportError(err)()
 			}
-			m.com.App.UpdateAgentModel(context.TODO())
+			m.com.Workspace.UpdateAgentModel(context.TODO())
 			status := "disabled"
 			if currentModel.Think {
 				status = "enabled"
@@ -1345,7 +1345,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 		// Attempt to import GitHub Copilot tokens from VSCode if available.
 		if isCopilot && !isConfigured() && !msg.ReAuthenticate {
-			m.com.Store().ImportCopilot()
+			m.com.Workspace.ImportCopilot()
 		}
 
 		if !isConfigured() || msg.ReAuthenticate {
@@ -1356,18 +1356,18 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		if err := m.com.Store().UpdatePreferredModel(config.ScopeGlobal, msg.ModelType, msg.Model); err != nil {
+		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, msg.ModelType, msg.Model); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		} else if _, ok := cfg.Models[config.SelectedModelTypeSmall]; !ok {
 			// Ensure small model is set is unset.
-			smallModel := m.com.App.GetDefaultSmallModel(providerID)
-			if err := m.com.Store().UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeSmall, smallModel); err != nil {
+			smallModel := m.com.Workspace.GetDefaultSmallModel(providerID)
+			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeSmall, smallModel); err != nil {
 				cmds = append(cmds, util.ReportError(err))
 			}
 		}
 
 		cmds = append(cmds, func() tea.Msg {
-			if err := m.com.App.UpdateAgentModel(context.TODO()); err != nil {
+			if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
 				return util.ReportError(err)
 			}
 
@@ -1383,7 +1383,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if isOnboarding {
 			m.setState(uiLanding, uiFocusEditor)
 			m.com.Config().SetupAgents()
-			if err := m.com.App.InitCoderAgent(context.TODO()); err != nil {
+			if err := m.com.Workspace.InitCoderAgent(context.TODO()); err != nil {
 				cmds = append(cmds, util.ReportError(err))
 			}
 		}
@@ -1407,13 +1407,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 		currentModel := cfg.Models[agentCfg.Model]
 		currentModel.ReasoningEffort = msg.Effort
-		if err := m.com.Store().UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
+		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
 
 		cmds = append(cmds, func() tea.Msg {
-			m.com.App.UpdateAgentModel(context.TODO())
+			m.com.Workspace.UpdateAgentModel(context.TODO())
 			return util.NewInfoMsg("Reasoning effort set to " + msg.Effort)
 		})
 		m.dialog.CloseDialog(dialog.ReasoningID)
@@ -1421,11 +1421,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseDialog(dialog.PermissionsID)
 		switch msg.Action {
 		case dialog.PermissionAllow:
-			m.com.App.Permissions.Grant(msg.Permission)
+			m.com.Workspace.PermissionGrant(msg.Permission)
 		case dialog.PermissionAllowForSession:
-			m.com.App.Permissions.GrantPersistent(msg.Permission)
+			m.com.Workspace.PermissionGrantPersistent(msg.Permission)
 		case dialog.PermissionDeny:
-			m.com.App.Permissions.Deny(msg.Permission)
+			m.com.Workspace.PermissionDeny(msg.Permission)
 		}
 
 	case dialog.ActionFilePickerSelected:
@@ -2019,7 +2019,7 @@ func (m *UI) View() tea.View {
 	}
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = m.caps.ReportFocusEvents
-	v.WindowTitle = "crush " + home.Short(m.com.Store().WorkingDir())
+	v.WindowTitle = "crush " + home.Short(m.com.Workspace.WorkingDir())
 
 	canvas := uv.NewScreenBuffer(m.width, m.height)
 	v.Cursor = m.Draw(canvas, canvas.Bounds())
@@ -2062,7 +2062,7 @@ func (m *UI) ShortHelp() []key.Binding {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
+			} else if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
 			binds = append(binds, cancelBinding)
@@ -2141,7 +2141,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
+			} else if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
 			binds = append(binds, []key.Binding{cancelBinding})
@@ -2258,7 +2258,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 func (m *UI) toggleCompactMode() tea.Cmd {
 	m.forceCompactMode = !m.forceCompactMode
 
-	err := m.com.Store().SetCompactMode(config.ScopeGlobal, m.forceCompactMode)
+	err := m.com.Workspace.SetCompactMode(config.ScopeGlobal, m.forceCompactMode)
 	if err != nil {
 		return util.ReportError(err)
 	}
@@ -2600,7 +2600,7 @@ func (m *UI) insertFileCompletion(path string) tea.Cmd {
 
 		if m.hasSession() {
 			// Skip attachment if file was already read and hasn't been modified.
-			lastRead := m.com.App.FileTracker.LastReadTime(context.Background(), m.session.ID, absPath)
+			lastRead := m.com.Workspace.FileTrackerLastReadTime(context.Background(), m.session.ID, absPath)
 			if !lastRead.IsZero() {
 				if info, err := os.Stat(path); err == nil && !info.ModTime().After(lastRead) {
 					return nil
@@ -2638,9 +2638,8 @@ func (m *UI) insertMCPResourceCompletion(item completions.ResourceCompletionValu
 	}
 
 	return func() tea.Msg {
-		contents, err := mcp.ReadResource(
+		contents, err := m.com.Workspace.ReadMCPResource(
 			context.Background(),
-			m.com.Store(),
 			item.MCPName,
 			item.URI,
 		)
@@ -2708,9 +2707,8 @@ func isWhitespace(b byte) bool {
 // isAgentBusy returns true if the agent coordinator exists and is currently
 // busy processing a request.
 func (m *UI) isAgentBusy() bool {
-	return m.com.App != nil &&
-		m.com.App.AgentCoordinator != nil &&
-		m.com.App.AgentCoordinator.IsBusy()
+	return m.com.Workspace.AgentIsReady() &&
+		m.com.Workspace.AgentIsBusy()
 }
 
 // hasSession returns true if there is an active session with a valid ID.
@@ -2767,13 +2765,13 @@ func (m *UI) cacheSidebarLogo(width int) {
 
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
-	if m.com.App.AgentCoordinator == nil {
+	if !m.com.Workspace.AgentIsReady() {
 		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
 	}
 
 	var cmds []tea.Cmd
 	if !m.hasSession() {
-		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
+		newSession, err := m.com.Workspace.CreateSession(context.Background(), "New Session")
 		if err != nil {
 			return util.ReportError(err)
 		}
@@ -2790,8 +2788,8 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	ctx := context.Background()
 	cmds = append(cmds, func() tea.Msg {
 		for _, path := range m.sessionFileReads {
-			m.com.App.FileTracker.RecordRead(ctx, m.session.ID, path)
-			m.com.App.LSPManager.Start(ctx, path)
+			m.com.Workspace.FileTrackerRecordRead(ctx, m.session.ID, path)
+			m.com.Workspace.LSPStart(ctx, path)
 		}
 		return nil
 	})
@@ -2799,7 +2797,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
 	cmds = append(cmds, func() tea.Msg {
-		_, err := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
+		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
@@ -2833,15 +2831,14 @@ func (m *UI) cancelAgent() tea.Cmd {
 		return nil
 	}
 
-	coordinator := m.com.App.AgentCoordinator
-	if coordinator == nil {
+	if !m.com.Workspace.AgentIsReady() {
 		return nil
 	}
 
 	if m.isCanceling {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
-		coordinator.Cancel(m.session.ID)
+		m.com.Workspace.AgentCancel(m.session.ID)
 		// Stop the spinning todo indicator.
 		m.todoIsSpinning = false
 		m.renderPills()
@@ -2849,8 +2846,8 @@ func (m *UI) cancelAgent() tea.Cmd {
 	}
 
 	// Check if there are queued prompts - if so, clear the queue.
-	if coordinator.QueuedPrompts(m.session.ID) > 0 {
-		coordinator.ClearQueue(m.session.ID)
+	if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
+		m.com.Workspace.AgentClearQueue(m.session.ID)
 		return nil
 	}
 
@@ -3071,7 +3068,7 @@ func (m *UI) newSession() tea.Cmd {
 	agenttools.ResetCache()
 	return tea.Batch(
 		func() tea.Msg {
-			m.com.App.LSPManager.StopAll(context.Background())
+			m.com.Workspace.LSPStopAll(context.Background())
 			return nil
 		},
 		m.loadPromptHistory(),
@@ -3302,7 +3299,7 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 
 	lspSection := m.lspInfo(sectionWidth, maxItemsPerSection, false)
 	mcpSection := m.mcpInfo(sectionWidth, maxItemsPerSection, false)
-	filesSection := m.filesInfo(m.com.Store().WorkingDir(), sectionWidth, maxItemsPerSection, false)
+	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), sectionWidth, maxItemsPerSection, false)
 	sections := lipgloss.JoinHorizontal(lipgloss.Top, filesSection, " ", lspSection, " ", mcpSection)
 	uv.NewStyledString(
 		s.CompactDetails.View.
@@ -3320,7 +3317,7 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 
 func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string) tea.Cmd {
 	load := func() tea.Msg {
-		prompt, err := commands.GetMCPPrompt(m.com.Store(), clientID, promptID, arguments)
+		prompt, err := m.com.Workspace.GetMCPPrompt(clientID, promptID, arguments)
 		if err != nil {
 			// TODO: make this better
 			return util.ReportError(err)()
@@ -3347,34 +3344,30 @@ func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string
 
 func (m *UI) handleStateChanged() tea.Cmd {
 	return func() tea.Msg {
-		m.com.App.UpdateAgentModel(context.Background())
+		m.com.Workspace.UpdateAgentModel(context.Background())
 		return mcpStateChangedMsg{
-			states: mcp.GetStates(),
+			states: m.com.Workspace.MCPGetStates(),
 		}
 	}
 }
 
-func handleMCPPromptsEvent(name string) tea.Cmd {
+func handleMCPPromptsEvent(ws workspace.Workspace, name string) tea.Cmd {
 	return func() tea.Msg {
-		mcp.RefreshPrompts(context.Background(), name)
+		ws.MCPRefreshPrompts(context.Background(), name)
 		return nil
 	}
 }
 
-func handleMCPToolsEvent(cfg *config.ConfigStore, name string) tea.Cmd {
+func handleMCPToolsEvent(ws workspace.Workspace, name string) tea.Cmd {
 	return func() tea.Msg {
-		mcp.RefreshTools(
-			context.Background(),
-			cfg,
-			name,
-		)
+		ws.RefreshMCPTools(context.Background(), name)
 		return nil
 	}
 }
 
-func handleMCPResourcesEvent(name string) tea.Cmd {
+func handleMCPResourcesEvent(ws workspace.Workspace, name string) tea.Cmd {
 	return func() tea.Msg {
-		mcp.RefreshResources(context.Background(), name)
+		ws.MCPRefreshResources(context.Background(), name)
 		return nil
 	}
 }

@@ -10,9 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/message"
@@ -37,6 +37,23 @@ func (c *Client) CreateWorkspace(ctx context.Context, ws proto.Workspace) (*prot
 		return nil, fmt.Errorf("failed to decode workspace: %w", err)
 	}
 	return &created, nil
+}
+
+// GetWorkspace retrieves a workspace from the server.
+func (c *Client) GetWorkspace(ctx context.Context, id string) (*proto.Workspace, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s", id), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get workspace: status code %d", rsp.StatusCode)
+	}
+	var ws proto.Workspace
+	if err := json.NewDecoder(rsp.Body).Decode(&ws); err != nil {
+		return nil, fmt.Errorf("failed to decode workspace: %w", err)
+	}
+	return &ws, nil
 }
 
 // DeleteWorkspace deletes a workspace on the server.
@@ -95,63 +112,44 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 
 			data = bytes.TrimSpace(data)
 
-			var event pubsub.Event[any]
-			if err := json.Unmarshal(data, &event); err != nil {
-				slog.Error("Unmarshaling event", "error", err)
-				continue
-			}
-
-			type alias pubsub.Event[any]
-			aux := &struct {
-				Payload json.RawMessage `json:"payload"`
-				*alias
-			}{
-				alias: (*alias)(&event),
-			}
-
-			if err := json.Unmarshal(data, &aux); err != nil {
-				slog.Error("Unmarshaling event payload", "error", err)
-				continue
-			}
-
 			var p pubsub.Payload
-			if err := json.Unmarshal(aux.Payload, &p); err != nil {
-				slog.Error("Unmarshaling event payload", "error", err)
+			if err := json.Unmarshal(data, &p); err != nil {
+				slog.Error("Unmarshaling event envelope", "error", err)
 				continue
 			}
 
 			switch p.Type {
 			case pubsub.PayloadTypeLSPEvent:
 				var e pubsub.Event[proto.LSPEvent]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeMCPEvent:
 				var e pubsub.Event[proto.MCPEvent]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypePermissionRequest:
 				var e pubsub.Event[proto.PermissionRequest]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypePermissionNotification:
 				var e pubsub.Event[proto.PermissionNotification]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeMessage:
 				var e pubsub.Event[proto.Message]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeSession:
 				var e pubsub.Event[proto.Session]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeFile:
 				var e pubsub.Event[proto.File]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeAgentEvent:
 				var e pubsub.Event[proto.AgentEvent]
-				_ = json.Unmarshal(data, &e)
+				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
 			default:
 				slog.Warn("Unknown event type", "type", p.Type)
@@ -191,7 +189,7 @@ func (c *Client) GetLSPDiagnostics(ctx context.Context, id string, lspName strin
 }
 
 // GetLSPs retrieves the LSP client states for a workspace.
-func (c *Client) GetLSPs(ctx context.Context, id string) (map[string]app.LSPClientInfo, error) {
+func (c *Client) GetLSPs(ctx context.Context, id string) (map[string]proto.LSPClientInfo, error) {
 	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/lsps", id), nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get LSPs: %w", err)
@@ -200,11 +198,62 @@ func (c *Client) GetLSPs(ctx context.Context, id string) (map[string]app.LSPClie
 	if rsp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get LSPs: status code %d", rsp.StatusCode)
 	}
-	var lsps map[string]app.LSPClientInfo
+	var lsps map[string]proto.LSPClientInfo
 	if err := json.NewDecoder(rsp.Body).Decode(&lsps); err != nil {
 		return nil, fmt.Errorf("failed to decode LSPs: %w", err)
 	}
 	return lsps, nil
+}
+
+// MCPGetStates retrieves the MCP client states for a workspace.
+func (c *Client) MCPGetStates(ctx context.Context, id string) (map[string]proto.MCPClientInfo, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/mcp/states", id), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCP states: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get MCP states: status code %d", rsp.StatusCode)
+	}
+	var states map[string]proto.MCPClientInfo
+	if err := json.NewDecoder(rsp.Body).Decode(&states); err != nil {
+		return nil, fmt.Errorf("failed to decode MCP states: %w", err)
+	}
+	return states, nil
+}
+
+// MCPRefreshPrompts refreshes prompts for a named MCP client.
+func (c *Client) MCPRefreshPrompts(ctx context.Context, id, name string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/mcp/refresh-prompts", id), nil,
+		jsonBody(struct {
+			Name string `json:"name"`
+		}{Name: name}),
+		http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to refresh MCP prompts: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to refresh MCP prompts: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// MCPRefreshResources refreshes resources for a named MCP client.
+func (c *Client) MCPRefreshResources(ctx context.Context, id, name string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/mcp/refresh-resources", id), nil,
+		jsonBody(struct {
+			Name string `json:"name"`
+		}{Name: name}),
+		http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to refresh MCP resources: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to refresh MCP resources: status code %d", rsp.StatusCode)
+	}
+	return nil
 }
 
 // GetAgentSessionQueuedPrompts retrieves the number of queued prompts for a
@@ -347,11 +396,11 @@ func (c *Client) ListMessages(ctx context.Context, id string, sessionID string) 
 	if rsp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get messages: status code %d", rsp.StatusCode)
 	}
-	var messages []message.Message
-	if err := json.NewDecoder(rsp.Body).Decode(&messages); err != nil {
+	var protoMsgs []proto.Message
+	if err := json.NewDecoder(rsp.Body).Decode(&protoMsgs); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("failed to decode messages: %w", err)
 	}
-	return messages, nil
+	return protoToMessages(protoMsgs), nil
 }
 
 // GetSession retrieves a specific session.
@@ -487,4 +536,259 @@ func jsonBody(v any) *bytes.Buffer {
 	m, _ := json.Marshal(v)
 	b.Write(m)
 	return b
+}
+
+// SaveSession updates a session in a workspace.
+func (c *Client) SaveSession(ctx context.Context, id string, sess session.Session) (*session.Session, error) {
+	rsp, err := c.put(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s", id, sess.ID), nil, jsonBody(sess), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to save session: status code %d", rsp.StatusCode)
+	}
+	var saved session.Session
+	if err := json.NewDecoder(rsp.Body).Decode(&saved); err != nil {
+		return nil, fmt.Errorf("failed to decode session: %w", err)
+	}
+	return &saved, nil
+}
+
+// DeleteSession deletes a session from a workspace.
+func (c *Client) DeleteSession(ctx context.Context, id string, sessionID string) error {
+	rsp, err := c.delete(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s", id, sessionID), nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to delete session: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// ListUserMessages retrieves user-role messages for a session.
+func (c *Client) ListUserMessages(ctx context.Context, id string, sessionID string) ([]message.Message, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/messages/user", id, sessionID), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user messages: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get user messages: status code %d", rsp.StatusCode)
+	}
+	var protoMsgs []proto.Message
+	if err := json.NewDecoder(rsp.Body).Decode(&protoMsgs); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("failed to decode user messages: %w", err)
+	}
+	return protoToMessages(protoMsgs), nil
+}
+
+// ListAllUserMessages retrieves all user-role messages across sessions.
+func (c *Client) ListAllUserMessages(ctx context.Context, id string) ([]message.Message, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/messages/user", id), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all user messages: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get all user messages: status code %d", rsp.StatusCode)
+	}
+	var protoMsgs []proto.Message
+	if err := json.NewDecoder(rsp.Body).Decode(&protoMsgs); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("failed to decode all user messages: %w", err)
+	}
+	return protoToMessages(protoMsgs), nil
+}
+
+// CancelAgentSession cancels an ongoing agent operation for a session.
+func (c *Client) CancelAgentSession(ctx context.Context, id string, sessionID string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/cancel", id, sessionID), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to cancel agent session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to cancel agent session: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// GetAgentSessionQueuedPromptsList retrieves the list of queued prompt
+// strings for a session.
+func (c *Client) GetAgentSessionQueuedPromptsList(ctx context.Context, id string, sessionID string) ([]string, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/prompts/list", id, sessionID), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get queued prompts list: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get queued prompts list: status code %d", rsp.StatusCode)
+	}
+	var prompts []string
+	if err := json.NewDecoder(rsp.Body).Decode(&prompts); err != nil {
+		return nil, fmt.Errorf("failed to decode queued prompts list: %w", err)
+	}
+	return prompts, nil
+}
+
+// GetDefaultSmallModel retrieves the default small model for a provider.
+func (c *Client) GetDefaultSmallModel(ctx context.Context, id string, providerID string) (*config.SelectedModel, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/agent/default-small-model", id), url.Values{"provider_id": []string{providerID}}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get default small model: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get default small model: status code %d", rsp.StatusCode)
+	}
+	var model config.SelectedModel
+	if err := json.NewDecoder(rsp.Body).Decode(&model); err != nil {
+		return nil, fmt.Errorf("failed to decode default small model: %w", err)
+	}
+	return &model, nil
+}
+
+// FileTrackerRecordRead records a file read for a session.
+func (c *Client) FileTrackerRecordRead(ctx context.Context, id string, sessionID, path string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/filetracker/read", id), nil, jsonBody(struct {
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+	}{SessionID: sessionID, Path: path}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to record file read: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to record file read: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// FileTrackerLastReadTime returns the last read time for a file in a
+// session.
+func (c *Client) FileTrackerLastReadTime(ctx context.Context, id string, sessionID, path string) (time.Time, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/filetracker/lastread", id), url.Values{
+		"session_id": []string{sessionID},
+		"path":       []string{path},
+	}, nil)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get last read time: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return time.Time{}, fmt.Errorf("failed to get last read time: status code %d", rsp.StatusCode)
+	}
+	var t time.Time
+	if err := json.NewDecoder(rsp.Body).Decode(&t); err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode last read time: %w", err)
+	}
+	return t, nil
+}
+
+// FileTrackerListReadFiles returns the list of read files for a session.
+func (c *Client) FileTrackerListReadFiles(ctx context.Context, id string, sessionID string) ([]string, error) {
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/filetracker/files", id, sessionID), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get read files: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get read files: status code %d", rsp.StatusCode)
+	}
+	var files []string
+	if err := json.NewDecoder(rsp.Body).Decode(&files); err != nil {
+		return nil, fmt.Errorf("failed to decode read files: %w", err)
+	}
+	return files, nil
+}
+
+// LSPStart starts an LSP server for a path.
+func (c *Client) LSPStart(ctx context.Context, id string, path string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/lsps/start", id), nil, jsonBody(struct {
+		Path string `json:"path"`
+	}{Path: path}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to start LSP: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to start LSP: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// LSPStopAll stops all LSP servers for a workspace.
+func (c *Client) LSPStopAll(ctx context.Context, id string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/lsps/stop", id), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to stop LSPs: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to stop LSPs: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+func protoToMessages(msgs []proto.Message) []message.Message {
+	out := make([]message.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = protoToMessage(m)
+	}
+	return out
+}
+
+func protoToMessage(m proto.Message) message.Message {
+	msg := message.Message{
+		ID:        m.ID,
+		SessionID: m.SessionID,
+		Role:      message.MessageRole(m.Role),
+		Model:     m.Model,
+		Provider:  m.Provider,
+		CreatedAt: m.CreatedAt,
+		UpdatedAt: m.UpdatedAt,
+	}
+
+	for _, p := range m.Parts {
+		switch v := p.(type) {
+		case proto.TextContent:
+			msg.Parts = append(msg.Parts, message.TextContent{Text: v.Text})
+		case proto.ReasoningContent:
+			msg.Parts = append(msg.Parts, message.ReasoningContent{
+				Thinking:   v.Thinking,
+				Signature:  v.Signature,
+				StartedAt:  v.StartedAt,
+				FinishedAt: v.FinishedAt,
+			})
+		case proto.ToolCall:
+			msg.Parts = append(msg.Parts, message.ToolCall{
+				ID:       v.ID,
+				Name:     v.Name,
+				Input:    v.Input,
+				Finished: v.Finished,
+			})
+		case proto.ToolResult:
+			msg.Parts = append(msg.Parts, message.ToolResult{
+				ToolCallID: v.ToolCallID,
+				Name:       v.Name,
+				Content:    v.Content,
+				IsError:    v.IsError,
+			})
+		case proto.Finish:
+			msg.Parts = append(msg.Parts, message.Finish{
+				Reason:  message.FinishReason(v.Reason),
+				Time:    v.Time,
+				Message: v.Message,
+				Details: v.Details,
+			})
+		case proto.ImageURLContent:
+			msg.Parts = append(msg.Parts, message.ImageURLContent{URL: v.URL, Detail: v.Detail})
+		case proto.BinaryContent:
+			msg.Parts = append(msg.Parts, message.BinaryContent{Path: v.Path, MIMEType: v.MIMEType, Data: v.Data})
+		}
+	}
+
+	return msg
 }

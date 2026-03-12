@@ -25,13 +25,13 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/event"
-	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/projects"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/server"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	ui "github.com/charmbracelet/crush/internal/ui/model"
 	"github.com/charmbracelet/crush/internal/version"
+	"github.com/charmbracelet/crush/internal/workspace"
 	"github.com/charmbracelet/fang"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -96,51 +96,33 @@ crush --data-dir /path/to/custom/.crush
 			return err
 		}
 
-		appInstance, err := setupAppWithProgressBar(cmd)
+		c, ws, err := setupClientApp(cmd, hostURL)
 		if err != nil {
 			return err
 		}
-		defer appInstance.Shutdown()
-
-		// Register the workspace with the server so it tracks active
-		// clients and auto-shuts down when the last one exits.
-		cwd, _ := ResolveCwd(cmd)
-		dataDir, _ := cmd.Flags().GetString("data-dir")
-		debug, _ := cmd.Flags().GetBool("debug")
-		yolo, _ := cmd.Flags().GetBool("yolo")
-
-		c, err := client.NewClient(cwd, hostURL.Scheme, hostURL.Host)
-		if err != nil {
-			return fmt.Errorf("failed to create client: %v", err)
-		}
-
-		ws, err := c.CreateWorkspace(cmd.Context(), proto.Workspace{
-			Path:    cwd,
-			DataDir: dataDir,
-			Debug:   debug,
-			YOLO:    yolo,
-			Version: version.Version,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to register workspace: %v", err)
-		}
-		defer func() { _ = c.DeleteWorkspace(cmd.Context(), ws.ID) }()
+		defer func() { _ = c.DeleteWorkspace(context.Background(), ws.ID) }()
 
 		event.AppInitialized()
 
-		// Set up the TUI.
-		var env uv.Environ = os.Environ()
+		clientWs := workspace.NewClientWorkspace(c, *ws)
 
-		com := common.DefaultCommon(appInstance)
+		if ws.Config.IsConfigured() {
+			if err := clientWs.InitCoderAgent(cmd.Context()); err != nil {
+				slog.Error("Failed to initialize coder agent", "error", err)
+			}
+		}
+
+		com := common.DefaultCommon(clientWs)
 		model := ui.New(com)
 
+		var env uv.Environ = os.Environ()
 		program := tea.NewProgram(
 			model,
 			tea.WithEnvironment(env),
 			tea.WithContext(cmd.Context()),
-			tea.WithFilter(ui.MouseEventFilter), // Filter mouse events based on focus state
+			tea.WithFilter(ui.MouseEventFilter),
 		)
-		go appInstance.Subscribe(program)
+		go clientWs.Subscribe(program)
 
 		if _, err := program.Run(); err != nil {
 			event.Error(err)
@@ -295,18 +277,14 @@ func setupClientApp(cmd *cobra.Command, hostURL *url.URL) (*client.Client, *prot
 		DataDir: dataDir,
 		Debug:   debug,
 		YOLO:    yolo,
+		Version: version.Version,
 		Env:     os.Environ(),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create workspace: %v", err)
 	}
 
-	cfg, err := c.GetGlobalConfig(cmd.Context())
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get global config: %v", err)
-	}
-
-	if shouldEnableMetrics(cfg) {
+	if shouldEnableMetrics(ws.Config) {
 		event.Init()
 	}
 
@@ -314,18 +292,29 @@ func setupClientApp(cmd *cobra.Command, hostURL *url.URL) (*client.Client, *prot
 }
 
 // ensureServer auto-starts a detached server if the socket file does not
-// exist. When connecting to an existing server, it waits for the health
-// endpoint to respond.
+// exist. When the socket exists, it verifies that the running server
+// version matches the client; on mismatch it shuts down the old server
+// and starts a fresh one.
 func ensureServer(cmd *cobra.Command, hostURL *url.URL) error {
 	switch hostURL.Scheme {
 	case "unix", "npipe":
-		_, err := os.Stat(hostURL.Host)
-		if err != nil && errors.Is(err, fs.ErrNotExist) {
+		needsStart := false
+		if _, err := os.Stat(hostURL.Host); err != nil && errors.Is(err, fs.ErrNotExist) {
+			needsStart = true
+		} else if err == nil {
+			if err := restartIfStale(cmd, hostURL); err != nil {
+				slog.Warn("Failed to check server version, restarting", "error", err)
+				needsStart = true
+			}
+		}
+
+		if needsStart {
 			if err := startDetachedServer(cmd); err != nil {
 				return err
 			}
 		}
 
+		var err error
 		for range 10 {
 			_, err = os.Stat(hostURL.Host)
 			if err == nil {
@@ -345,43 +334,40 @@ func ensureServer(cmd *cobra.Command, hostURL *url.URL) error {
 	return nil
 }
 
-// waitForHealth polls the server's health endpoint until it responds.
-func waitForHealth(ctx context.Context, c *client.Client) error {
-	var err error
-	for range 10 {
-		err = c.Health(ctx)
-		if err == nil {
-			return nil
+// restartIfStale checks whether the running server matches the current
+// client version. When they differ, it sends a shutdown command and
+// removes the stale socket so the caller can start a fresh server.
+func restartIfStale(cmd *cobra.Command, hostURL *url.URL) error {
+	c, err := client.NewClient("", hostURL.Scheme, hostURL.Host)
+	if err != nil {
+		return err
+	}
+	vi, err := c.VersionInfo(cmd.Context())
+	if err != nil {
+		return err
+	}
+	if vi.Version == version.Version {
+		return nil
+	}
+	slog.Info("Server version mismatch, restarting",
+		"server", vi.Version,
+		"client", version.Version,
+	)
+	_ = c.ShutdownServer(cmd.Context())
+	// Give the old process a moment to release the socket.
+	for range 20 {
+		if _, err := os.Stat(hostURL.Host); errors.Is(err, fs.ErrNotExist) {
+			break
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-cmd.Context().Done():
+			return cmd.Context().Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("failed to connect to crush server: %v", err)
-}
-
-// streamEvents forwards SSE events from the client to the TUI program.
-func streamEvents(ctx context.Context, evc <-chan any, p *tea.Program) {
-	defer log.RecoverPanic("app.Subscribe", func() {
-		slog.Info("TUI subscription panic: attempting graceful shutdown")
-		p.Quit()
-	})
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Debug("TUI message handler shutting down")
-			return
-		case ev, ok := <-evc:
-			if !ok {
-				slog.Debug("TUI message channel closed")
-				return
-			}
-			p.Send(ev)
-		}
-	}
+	// Force-remove if the socket is still lingering.
+	_ = os.Remove(hostURL.Host)
+	return nil
 }
 
 var safeNameRegexp = regexp.MustCompile(`[^a-zA-Z0-9._-]`)

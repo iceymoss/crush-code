@@ -1,6 +1,8 @@
 package proto
 
 import (
+	"encoding/json"
+	"errors"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -28,13 +30,15 @@ type Error struct {
 
 // AgentInfo represents information about the agent.
 type AgentInfo struct {
-	IsBusy bool          `json:"is_busy"`
-	Model  catwalk.Model `json:"model"`
+	IsBusy   bool                 `json:"is_busy"`
+	IsReady  bool                 `json:"is_ready"`
+	Model    catwalk.Model        `json:"model"`
+	ModelCfg config.SelectedModel `json:"model_cfg"`
 }
 
 // IsZero checks if the AgentInfo is zero-valued.
 func (a AgentInfo) IsZero() bool {
-	return !a.IsBusy && a.Model.ID == ""
+	return !a.IsBusy && !a.IsReady && a.Model.ID == ""
 }
 
 // AgentMessage represents a message sent to the agent.
@@ -114,6 +118,42 @@ type LSPEvent struct {
 	DiagnosticCount int             `json:"diagnostic_count,omitempty"`
 }
 
+// MarshalJSON implements the [json.Marshaler] interface.
+func (e LSPEvent) MarshalJSON() ([]byte, error) {
+	type Alias LSPEvent
+	return json.Marshal(&struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Error: func() string {
+			if e.Error != nil {
+				return e.Error.Error()
+			}
+			return ""
+		}(),
+		Alias: (Alias)(e),
+	})
+}
+
+// UnmarshalJSON implements the [json.Unmarshaler] interface.
+func (e *LSPEvent) UnmarshalJSON(data []byte) error {
+	type Alias LSPEvent
+	aux := &struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Alias: (Alias)(*e),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*e = LSPEvent(aux.Alias)
+	if aux.Error != "" {
+		e.Error = errors.New(aux.Error)
+	}
+	return nil
+}
+
 // LSPClientInfo holds information about an LSP client's state.
 type LSPClientInfo struct {
 	Name            string          `json:"name"`
@@ -121,4 +161,40 @@ type LSPClientInfo struct {
 	Error           error           `json:"error,omitempty"`
 	DiagnosticCount int             `json:"diagnostic_count,omitempty"`
 	ConnectedAt     time.Time       `json:"connected_at"`
+}
+
+// MarshalJSON implements the [json.Marshaler] interface.
+func (i LSPClientInfo) MarshalJSON() ([]byte, error) {
+	type Alias LSPClientInfo
+	return json.Marshal(&struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Error: func() string {
+			if i.Error != nil {
+				return i.Error.Error()
+			}
+			return ""
+		}(),
+		Alias: (Alias)(i),
+	})
+}
+
+// UnmarshalJSON implements the [json.Unmarshaler] interface.
+func (i *LSPClientInfo) UnmarshalJSON(data []byte) error {
+	type Alias LSPClientInfo
+	aux := &struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Alias: (Alias)(*i),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*i = LSPClientInfo(aux.Alias)
+	if aux.Error != "" {
+		i.Error = errors.New(aux.Error)
+	}
+	return nil
 }

@@ -32,9 +32,10 @@ type AgentEvent struct {
 	Error   error          `json:"error,omitempty"`
 
 	// When summarizing.
-	SessionID string `json:"session_id,omitempty"`
-	Progress  string `json:"progress,omitempty"`
-	Done      bool   `json:"done,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	SessionTitle string `json:"session_title,omitempty"`
+	Progress     string `json:"progress,omitempty"`
+	Done         bool   `json:"done,omitempty"`
 }
 
 // MarshalJSON implements the [json.Marshaler] interface.

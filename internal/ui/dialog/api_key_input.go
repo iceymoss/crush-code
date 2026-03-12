@@ -296,7 +296,7 @@ func (m *APIKeyInput) verifyAPIKey() tea.Msg {
 		Type:    m.provider.Type,
 		BaseURL: m.provider.APIEndpoint,
 	}
-	err := providerConfig.TestConnection(m.com.Store().Resolver())
+	err := providerConfig.TestConnection(m.com.Workspace.Resolver())
 
 	// intentionally wait for at least 750ms to make sure the user sees the spinner
 	elapsed := time.Since(start)
@@ -312,9 +312,7 @@ func (m *APIKeyInput) verifyAPIKey() tea.Msg {
 }
 
 func (m *APIKeyInput) saveKeyAndContinue() Action {
-	store := m.com.Store()
-
-	err := store.SetProviderAPIKey(config.ScopeGlobal, string(m.provider.ID), m.input.Value())
+	err := m.com.Workspace.SetProviderAPIKey(config.ScopeGlobal, string(m.provider.ID), m.input.Value())
 	if err != nil {
 		return ActionCmd{util.ReportError(fmt.Errorf("failed to save API key: %w", err))}
 	}

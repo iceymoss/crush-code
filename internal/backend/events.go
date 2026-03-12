@@ -1,8 +1,11 @@
 package backend
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
 
+	mcptools "github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 )
@@ -64,4 +67,41 @@ func (b *Backend) GetWorkspaceProviders(workspaceID string) (any, error) {
 
 	providers, _ := config.Providers(ws.Cfg.Config())
 	return providers, nil
+}
+
+// LSPStart starts an LSP server for the given path.
+func (b *Backend) LSPStart(ctx context.Context, workspaceID, path string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	ws.LSPManager.Start(ctx, path)
+	return nil
+}
+
+// LSPStopAll stops all LSP servers for a workspace.
+func (b *Backend) LSPStopAll(ctx context.Context, workspaceID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	ws.LSPManager.StopAll(ctx)
+	return nil
+}
+
+// MCPGetStates returns the current state of all MCP clients.
+func (b *Backend) MCPGetStates(_ string) map[string]mcptools.ClientInfo {
+	return mcptools.GetStates()
+}
+
+// MCPRefreshPrompts refreshes prompts for a named MCP client.
+func (b *Backend) MCPRefreshPrompts(ctx context.Context, _ string, name string) {
+	mcptools.RefreshPrompts(ctx, name)
+}
+
+// MCPRefreshResources refreshes resources for a named MCP client.
+func (b *Backend) MCPRefreshResources(ctx context.Context, _ string, name string) {
+	mcptools.RefreshResources(ctx, name)
 }

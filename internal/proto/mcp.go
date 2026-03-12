@@ -1,6 +1,10 @@
 package proto
 
-import "fmt"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
 
 // MCPState represents the current state of an MCP client.
 type MCPState int
@@ -54,7 +58,10 @@ func (s MCPState) String() string {
 type MCPEventType string
 
 const (
-	MCPEventStateChanged MCPEventType = "state_changed"
+	MCPEventStateChanged         MCPEventType = "state_changed"
+	MCPEventToolsListChanged     MCPEventType = "tools_list_changed"
+	MCPEventPromptsListChanged   MCPEventType = "prompts_list_changed"
+	MCPEventResourcesListChanged MCPEventType = "resources_list_changed"
 )
 
 // MarshalText implements the [encoding.TextMarshaler] interface.
@@ -70,9 +77,95 @@ func (t *MCPEventType) UnmarshalText(data []byte) error {
 
 // MCPEvent represents an event in the MCP system.
 type MCPEvent struct {
-	Type      MCPEventType `json:"type"`
-	Name      string       `json:"name"`
-	State     MCPState     `json:"state"`
-	Error     error        `json:"error,omitempty"`
-	ToolCount int          `json:"tool_count,omitempty"`
+	Type          MCPEventType `json:"type"`
+	Name          string       `json:"name"`
+	State         MCPState     `json:"state"`
+	Error         error        `json:"error,omitempty"`
+	ToolCount     int          `json:"tool_count,omitempty"`
+	PromptCount   int          `json:"prompt_count,omitempty"`
+	ResourceCount int          `json:"resource_count,omitempty"`
+}
+
+// MarshalJSON implements the [json.Marshaler] interface.
+func (e MCPEvent) MarshalJSON() ([]byte, error) {
+	type Alias MCPEvent
+	return json.Marshal(&struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Error: func() string {
+			if e.Error != nil {
+				return e.Error.Error()
+			}
+			return ""
+		}(),
+		Alias: (Alias)(e),
+	})
+}
+
+// UnmarshalJSON implements the [json.Unmarshaler] interface.
+func (e *MCPEvent) UnmarshalJSON(data []byte) error {
+	type Alias MCPEvent
+	aux := &struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Alias: (Alias)(*e),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*e = MCPEvent(aux.Alias)
+	if aux.Error != "" {
+		e.Error = errors.New(aux.Error)
+	}
+	return nil
+}
+
+// MCPClientInfo is the wire-format representation of an MCP client's
+// state, suitable for JSON transport between server and client.
+type MCPClientInfo struct {
+	Name          string   `json:"name"`
+	State         MCPState `json:"state"`
+	Error         error    `json:"error,omitempty"`
+	ToolCount     int      `json:"tool_count,omitempty"`
+	PromptCount   int      `json:"prompt_count,omitempty"`
+	ResourceCount int      `json:"resource_count,omitempty"`
+	ConnectedAt   int64    `json:"connected_at,omitempty"`
+}
+
+// MarshalJSON implements the [json.Marshaler] interface.
+func (i MCPClientInfo) MarshalJSON() ([]byte, error) {
+	type Alias MCPClientInfo
+	return json.Marshal(&struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Error: func() string {
+			if i.Error != nil {
+				return i.Error.Error()
+			}
+			return ""
+		}(),
+		Alias: (Alias)(i),
+	})
+}
+
+// UnmarshalJSON implements the [json.Unmarshaler] interface.
+func (i *MCPClientInfo) UnmarshalJSON(data []byte) error {
+	type Alias MCPClientInfo
+	aux := &struct {
+		Error string `json:"error,omitempty"`
+		Alias
+	}{
+		Alias: (Alias)(*i),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*i = MCPClientInfo(aux.Alias)
+	if aux.Error != "" {
+		i.Error = errors.New(aux.Error)
+	}
+	return nil
 }
