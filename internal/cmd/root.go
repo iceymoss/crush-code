@@ -235,11 +235,12 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 		return nil, err
 	}
 
-	cfg, err := config.Init(cwd, dataDir, debug)
+	store, err := config.Init(cwd, dataDir, debug)
 	if err != nil {
 		return nil, err
 	}
 
+	cfg := store.Config()
 	if cfg.Permissions == nil {
 		cfg.Permissions = &config.Permissions{}
 	}
@@ -261,7 +262,7 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 		return nil, err
 	}
 
-	appInstance, err := app.New(ctx, conn, cfg)
+	appInstance, err := app.New(ctx, conn, store)
 	if err != nil {
 		slog.Error("Failed to create app instance", "error", err)
 		return nil, err

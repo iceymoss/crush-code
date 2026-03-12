@@ -51,7 +51,7 @@ func (b *Backend) GetWorkspaceConfig(workspaceID string) (*config.Config, error)
 		return nil, err
 	}
 
-	return ws.Cfg, nil
+	return ws.Cfg.Config(), nil
 }
 
 // GetWorkspaceProviders returns the configured providers for a
@@ -62,6 +62,6 @@ func (b *Backend) GetWorkspaceProviders(workspaceID string) (any, error) {
 		return nil, err
 	}
 
-	providers, _ := config.Providers(ws.Cfg)
+	providers, _ := config.Providers(ws.Cfg.Config())
 	return providers, nil
 }

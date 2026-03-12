@@ -38,7 +38,7 @@ type ShutdownFunc func()
 // server. It manages workspaces and delegates to [app.App] services.
 type Backend struct {
 	workspaces *csync.Map[string, *Workspace]
-	cfg        *config.Config
+	cfg        *config.ConfigStore
 	ctx        context.Context
 	shutdownFn ShutdownFunc
 }
@@ -49,12 +49,12 @@ type Workspace struct {
 	*app.App
 	ID   string
 	Path string
-	Cfg  *config.Config
+	Cfg  *config.ConfigStore
 	Env  []string
 }
 
 // New creates a new [Backend].
-func New(ctx context.Context, cfg *config.Config, shutdownFn ShutdownFunc) *Backend {
+func New(ctx context.Context, cfg *config.ConfigStore, shutdownFn ShutdownFunc) *Backend {
 	return &Backend{
 		workspaces: csync.NewMap[string, *Workspace](),
 		cfg:        cfg,
@@ -95,16 +95,16 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 		return nil, proto.Workspace{}, fmt.Errorf("failed to initialize config: %w", err)
 	}
 
-	if cfg.Permissions == nil {
-		cfg.Permissions = &config.Permissions{}
+	if cfg.Config().Permissions == nil {
+		cfg.Config().Permissions = &config.Permissions{}
 	}
-	cfg.Permissions.SkipRequests = args.YOLO
+	cfg.Config().Permissions.SkipRequests = args.YOLO
 
-	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
+	if err := createDotCrushDir(cfg.Config().Options.DataDirectory); err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	conn, err := db.Connect(b.ctx, cfg.Options.DataDirectory)
+	conn, err := db.Connect(b.ctx, cfg.Config().Options.DataDirectory)
 	if err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -138,10 +138,10 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 	result := proto.Workspace{
 		ID:      id,
 		Path:    args.Path,
-		DataDir: cfg.Options.DataDirectory,
-		Debug:   cfg.Options.Debug,
-		YOLO:    cfg.Permissions.SkipRequests,
-		Config:  cfg,
+		DataDir: cfg.Config().Options.DataDirectory,
+		Debug:   cfg.Config().Options.Debug,
+		YOLO:    cfg.Config().Permissions.SkipRequests,
+		Config:  cfg.Config(),
 		Env:     args.Env,
 	}
 
@@ -183,7 +183,7 @@ func (b *Backend) VersionInfo() proto.VersionInfo {
 }
 
 // Config returns the server-level configuration.
-func (b *Backend) Config() *config.Config {
+func (b *Backend) Config() *config.ConfigStore {
 	return b.cfg
 }
 
@@ -195,12 +195,13 @@ func (b *Backend) Shutdown() {
 }
 
 func workspaceToProto(ws *Workspace) proto.Workspace {
+	cfg := ws.Cfg.Config()
 	return proto.Workspace{
 		ID:      ws.ID,
 		Path:    ws.Path,
-		YOLO:    ws.Cfg.Permissions != nil && ws.Cfg.Permissions.SkipRequests,
-		DataDir: ws.Cfg.Options.DataDirectory,
-		Debug:   ws.Cfg.Options.Debug,
-		Config:  ws.Cfg,
+		YOLO:    cfg.Permissions != nil && cfg.Permissions.SkipRequests,
+		DataDir: cfg.Options.DataDirectory,
+		Debug:   cfg.Options.Debug,
+		Config:  cfg,
 	}
 }

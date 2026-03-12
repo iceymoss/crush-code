@@ -73,7 +73,7 @@ func (s *Server) SetLogger(logger *slog.Logger) {
 }
 
 // DefaultServer returns a new [Server] with the default address.
-func DefaultServer(cfg *config.Config) *Server {
+func DefaultServer(cfg *config.ConfigStore) *Server {
 	hostURL, err := ParseHostURL(DefaultHost())
 	if err != nil {
 		panic("invalid default host")
@@ -82,7 +82,7 @@ func DefaultServer(cfg *config.Config) *Server {
 }
 
 // NewServer creates a new [Server] with the given network and address.
-func NewServer(cfg *config.Config, network, address string) *Server {
+func NewServer(cfg *config.ConfigStore, network, address string) *Server {
 	s := new(Server)
 	s.Addr = address
 	s.network = network
