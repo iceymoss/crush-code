@@ -82,6 +82,7 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 	}
 
 	if rsp.StatusCode != http.StatusOK {
+		rsp.Body.Close()
 		return nil, fmt.Errorf("failed to subscribe to events: status code %d", rsp.StatusCode)
 	}
 

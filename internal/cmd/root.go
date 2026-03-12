@@ -281,7 +281,29 @@ func setupClientApp(cmd *cobra.Command, hostURL *url.URL) (*client.Client, *prot
 		Env:     os.Environ(),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create workspace: %v", err)
+		// The server socket may exist before the HTTP handler is ready.
+		// Retry a few times with a short backoff.
+		for range 5 {
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+			ws, err = c.CreateWorkspace(ctx, proto.Workspace{
+				Path:    cwd,
+				DataDir: dataDir,
+				Debug:   debug,
+				YOLO:    yolo,
+				Version: version.Version,
+				Env:     os.Environ(),
+			})
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create workspace: %v", err)
+		}
 	}
 
 	if shouldEnableMetrics(ws.Config) {

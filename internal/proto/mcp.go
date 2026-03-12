@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // MCPState represents the current state of an MCP client.
@@ -125,13 +126,13 @@ func (e *MCPEvent) UnmarshalJSON(data []byte) error {
 // MCPClientInfo is the wire-format representation of an MCP client's
 // state, suitable for JSON transport between server and client.
 type MCPClientInfo struct {
-	Name          string   `json:"name"`
-	State         MCPState `json:"state"`
-	Error         error    `json:"error,omitempty"`
-	ToolCount     int      `json:"tool_count,omitempty"`
-	PromptCount   int      `json:"prompt_count,omitempty"`
-	ResourceCount int      `json:"resource_count,omitempty"`
-	ConnectedAt   int64    `json:"connected_at,omitempty"`
+	Name          string    `json:"name"`
+	State         MCPState  `json:"state"`
+	Error         error     `json:"error,omitempty"`
+	ToolCount     int       `json:"tool_count,omitempty"`
+	PromptCount   int       `json:"prompt_count,omitempty"`
+	ResourceCount int       `json:"resource_count,omitempty"`
+	ConnectedAt   time.Time `json:"connected_at"`
 }
 
 // MarshalJSON implements the [json.Marshaler] interface.

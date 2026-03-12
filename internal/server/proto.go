@@ -366,8 +366,6 @@ func (c *controllerV1) handleGetWorkspaceAgent(w http.ResponseWriter, r *http.Re
 func (c *controllerV1) handlePostWorkspaceAgent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	w.Header().Set("Accept", "application/json")
-
 	var msg proto.AgentMessage
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
@@ -379,6 +377,7 @@ func (c *controllerV1) handlePostWorkspaceAgent(w http.ResponseWriter, r *http.R
 		c.handleError(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (c *controllerV1) handlePostWorkspaceAgentInit(w http.ResponseWriter, r *http.Request) {
@@ -387,6 +386,7 @@ func (c *controllerV1) handlePostWorkspaceAgentInit(w http.ResponseWriter, r *ht
 		c.handleError(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (c *controllerV1) handlePostWorkspaceAgentUpdate(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +395,7 @@ func (c *controllerV1) handlePostWorkspaceAgentUpdate(w http.ResponseWriter, r *
 		c.handleError(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (c *controllerV1) handleGetWorkspaceAgentSession(w http.ResponseWriter, r *http.Request) {
@@ -439,13 +440,14 @@ func (c *controllerV1) handlePostWorkspaceAgentSessionPromptClear(w http.Respons
 	w.WriteHeader(http.StatusOK)
 }
 
-func (c *controllerV1) handleGetWorkspaceAgentSessionSummarize(w http.ResponseWriter, r *http.Request) {
+func (c *controllerV1) handlePostWorkspaceAgentSessionSummarize(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sid := r.PathValue("sid")
 	if err := c.backend.SummarizeSession(r.Context(), id, sid); err != nil {
 		c.handleError(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (c *controllerV1) handleGetWorkspaceAgentSessionPromptList(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +486,7 @@ func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter
 		c.handleError(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (c *controllerV1) handlePostWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {

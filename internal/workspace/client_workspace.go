@@ -350,8 +350,7 @@ func (w *ClientWorkspace) WorkingDir() string {
 }
 
 func (w *ClientWorkspace) Resolver() config.VariableResolver {
-	// In client mode, variable resolution is handled server-side.
-	return nil
+	return config.IdentityResolver()
 }
 
 // -- Config mutations --
@@ -447,7 +446,7 @@ func (w *ClientWorkspace) MCPGetStates() map[string]mcp.ClientInfo {
 				Prompts:   v.PromptCount,
 				Resources: v.ResourceCount,
 			},
-			ConnectedAt: time.Unix(v.ConnectedAt, 0),
+			ConnectedAt: v.ConnectedAt,
 		}
 	}
 	return result
@@ -590,7 +589,8 @@ func translateEvent(ev any) tea.Msg {
 			},
 		}
 	default:
-		return ev.(tea.Msg)
+		slog.Warn("Unknown event type in translateEvent", "type", fmt.Sprintf("%T", ev))
+		return nil
 	}
 }
 
