@@ -20,12 +20,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
-	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/event"
-	"github.com/charmbracelet/crush/internal/projects"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/server"
 	"github.com/charmbracelet/crush/internal/ui/common"
@@ -34,7 +31,6 @@ import (
 	"github.com/charmbracelet/crush/internal/workspace"
 	"github.com/charmbracelet/fang"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -46,10 +42,9 @@ func init() {
 	rootCmd.PersistentFlags().StringP("cwd", "c", "", "Current working directory")
 	rootCmd.PersistentFlags().StringP("data-dir", "D", "", "Custom crush data directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
+	rootCmd.PersistentFlags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
+	rootCmd.PersistentFlags().StringVarP(&clientHost, "host", "H", server.DefaultHost(), "Connect to a specific crush server host (for advanced users)")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
-	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
-
-	rootCmd.Flags().StringVarP(&clientHost, "host", "H", server.DefaultHost(), "Connect to a specific crush server host (for advanced users)")
 
 	rootCmd.AddCommand(
 		runCmd,
@@ -87,20 +82,11 @@ crush --yolo
 crush --data-dir /path/to/custom/.crush
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		hostURL, err := server.ParseHostURL(clientHost)
-		if err != nil {
-			return fmt.Errorf("invalid host URL: %v", err)
-		}
-
-		if err := ensureServer(cmd, hostURL); err != nil {
-			return err
-		}
-
-		c, ws, err := setupClientApp(cmd, hostURL)
+		c, ws, cleanup, err := connectToServer(cmd)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = c.DeleteWorkspace(context.Background(), ws.ID) }()
+		defer cleanup()
 
 		event.AppInitialized()
 
@@ -188,25 +174,18 @@ func supportsProgressBar() bool {
 	return isWindowsTerminal || strings.Contains(strings.ToLower(termProg), "ghostty")
 }
 
-func setupAppWithProgressBar(cmd *cobra.Command) (*app.App, error) {
-	app, err := setupApp(cmd)
+// connectToServer ensures the server is running, creates a client and
+// workspace, and returns a cleanup function that deletes the workspace.
+func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func(), error) {
+	hostURL, err := server.ParseHostURL(clientHost)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, fmt.Errorf("invalid host URL: %v", err)
 	}
 
-	// Check if progress bar is enabled in config (defaults to true if nil)
-	progressEnabled := app.Config().Options.Progress == nil || *app.Config().Options.Progress
-	if progressEnabled && supportsProgressBar() {
-		_, _ = fmt.Fprintf(os.Stderr, ansi.SetIndeterminateProgressBar)
-		defer func() { _, _ = fmt.Fprintf(os.Stderr, ansi.ResetProgressBar) }()
+	if err := ensureServer(cmd, hostURL); err != nil {
+		return nil, nil, nil, err
 	}
 
-	return app, nil
-}
-
-// setupApp handles the common setup logic for both interactive and non-interactive modes.
-// It returns the app instance, config, cleanup function, and any error.
-func setupApp(cmd *cobra.Command) (*app.App, error) {
 	debug, _ := cmd.Flags().GetBool("debug")
 	yolo, _ := cmd.Flags().GetBool("yolo")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
@@ -214,95 +193,40 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 
 	cwd, err := ResolveCwd(cmd)
 	if err != nil {
-		return nil, err
-	}
-
-	store, err := config.Init(cwd, dataDir, debug)
-	if err != nil {
-		return nil, err
-	}
-
-	store.Overrides().SkipPermissionRequests = yolo
-	cfg := store.Config()
-
-	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
-		return nil, err
-	}
-
-	// Register this project in the centralized projects list.
-	if err := projects.Register(cwd, cfg.Options.DataDirectory); err != nil {
-		slog.Warn("Failed to register project", "error", err)
-		// Non-fatal: continue even if registration fails
-	}
-
-	// Connect to DB; this will also run migrations.
-	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
-	if err != nil {
-		return nil, err
-	}
-
-	appInstance, err := app.New(ctx, conn, store)
-	if err != nil {
-		slog.Error("Failed to create app instance", "error", err)
-		return nil, err
-	}
-
-	if shouldEnableMetrics(cfg) {
-		event.Init()
-	}
-
-	return appInstance, nil
-}
-
-// setupClientApp sets up a client-based workspace via the server. It
-// auto-starts a detached server process if the socket does not exist.
-func setupClientApp(cmd *cobra.Command, hostURL *url.URL) (*client.Client, *proto.Workspace, error) {
-	debug, _ := cmd.Flags().GetBool("debug")
-	yolo, _ := cmd.Flags().GetBool("yolo")
-	dataDir, _ := cmd.Flags().GetString("data-dir")
-	ctx := cmd.Context()
-
-	cwd, err := ResolveCwd(cmd)
-	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	c, err := client.NewClient(cwd, hostURL.Scheme, hostURL.Host)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	ws, err := c.CreateWorkspace(ctx, proto.Workspace{
+	wsReq := proto.Workspace{
 		Path:    cwd,
 		DataDir: dataDir,
 		Debug:   debug,
 		YOLO:    yolo,
 		Version: version.Version,
 		Env:     os.Environ(),
-	})
+	}
+
+	ws, err := c.CreateWorkspace(ctx, wsReq)
 	if err != nil {
 		// The server socket may exist before the HTTP handler is ready.
 		// Retry a few times with a short backoff.
 		for range 5 {
 			select {
 			case <-ctx.Done():
-				return nil, nil, ctx.Err()
+				return nil, nil, nil, ctx.Err()
 			case <-time.After(200 * time.Millisecond):
 			}
-			ws, err = c.CreateWorkspace(ctx, proto.Workspace{
-				Path:    cwd,
-				DataDir: dataDir,
-				Debug:   debug,
-				YOLO:    yolo,
-				Version: version.Version,
-				Env:     os.Environ(),
-			})
+			ws, err = c.CreateWorkspace(ctx, wsReq)
 			if err == nil {
 				break
 			}
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create workspace: %v", err)
+			return nil, nil, nil, fmt.Errorf("failed to create workspace: %v", err)
 		}
 	}
 
@@ -310,7 +234,8 @@ func setupClientApp(cmd *cobra.Command, hostURL *url.URL) (*client.Client, *prot
 		event.Init()
 	}
 
-	return c, ws, nil
+	cleanup := func() { _ = c.DeleteWorkspace(context.Background(), ws.ID) }
+	return c, ws, cleanup, nil
 }
 
 // ensureServer auto-starts a detached server if the socket file does not
@@ -487,19 +412,4 @@ func ResolveCwd(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("failed to get current working directory: %v", err)
 	}
 	return cwd, nil
-}
-
-func createDotCrushDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("failed to create data directory: %q %w", dir, err)
-	}
-
-	gitIgnorePath := filepath.Join(dir, ".gitignore")
-	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
-		if err := os.WriteFile(gitIgnorePath, []byte("*\n"), 0o644); err != nil {
-			return fmt.Errorf("failed to create .gitignore file: %q %w", gitIgnorePath, err)
-		}
-	}
-
-	return nil
 }
