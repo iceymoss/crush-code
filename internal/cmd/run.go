@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/crush/internal/format"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -48,12 +49,23 @@ crush run --quiet "Generate a README for this project"
 
 # Run in verbose mode (show logs)
 crush run --verbose "Generate a README for this project"
+
+# Continue a previous session
+crush run --session {session-id} "Follow up on your last response"
+
+# Continue the most recent session
+crush run --continue "Follow up on your last response"
+
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		quiet, _ := cmd.Flags().GetBool("quiet")
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		largeModel, _ := cmd.Flags().GetString("model")
-		smallModel, _ := cmd.Flags().GetString("small-model")
+		var (
+			quiet, _      = cmd.Flags().GetBool("quiet")
+			verbose, _    = cmd.Flags().GetBool("verbose")
+			largeModel, _ = cmd.Flags().GetString("model")
+			smallModel, _ = cmd.Flags().GetString("small-model")
+			sessionID, _  = cmd.Flags().GetString("session")
+			useLast, _    = cmd.Flags().GetBool("continue")
+		)
 
 		// Cancel on SIGINT or SIGTERM.
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
@@ -64,6 +76,14 @@ crush run --verbose "Generate a README for this project"
 			return err
 		}
 		defer cleanup()
+
+		if sessionID != "" {
+			sess, err := resolveSessionByID(ctx, c, ws.ID, sessionID)
+			if err != nil {
+				return err
+			}
+			sessionID = sess.ID
+		}
 
 		if !ws.Config.IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'crush' to set up a provider interactively")
@@ -88,7 +108,14 @@ crush run --verbose "Generate a README for this project"
 		event.SetNonInteractive(true)
 		event.AppInitialized()
 
-		return runNonInteractive(ctx, c, ws, prompt, largeModel, smallModel, quiet || verbose)
+		switch {
+		case sessionID != "":
+			event.SetContinueBySessionID(true)
+		case useLast:
+			event.SetContinueLastSession(true)
+		}
+
+		return runNonInteractive(ctx, c, ws, prompt, largeModel, smallModel, quiet || verbose, sessionID, useLast)
 	},
 }
 
@@ -97,6 +124,9 @@ func init() {
 	runCmd.Flags().BoolP("verbose", "v", false, "Show logs")
 	runCmd.Flags().StringP("model", "m", "", "Model to use. Accepts 'model' or 'provider/model' to disambiguate models with the same name across providers")
 	runCmd.Flags().String("small-model", "", "Small model to use. If not provided, uses the default small model for the provider")
+	runCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
+	runCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
+	runCmd.MarkFlagsMutuallyExclusive("session", "continue")
 }
 
 // runNonInteractive executes the agent via the server and streams output
@@ -107,6 +137,8 @@ func runNonInteractive(
 	ws *proto.Workspace,
 	prompt, largeModel, smallModel string,
 	hideSpinner bool,
+	continueSessionID string,
+	useLast bool,
 ) error {
 	slog.Info("Running in non-interactive mode")
 
@@ -172,11 +204,15 @@ func runNonInteractive(
 
 	defer stopSpinner()
 
-	sess, err := c.CreateSession(ctx, ws.ID, "non-interactive")
+	sess, err := resolveSession(ctx, c, ws.ID, continueSessionID, useLast)
 	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		return fmt.Errorf("failed to resolve session: %w", err)
 	}
-	slog.Info("Created session for non-interactive run", "session_id", sess.ID)
+	if continueSessionID != "" || useLast {
+		slog.Info("Continuing session for non-interactive run", "session_id", sess.ID)
+	} else {
+		slog.Info("Created session for non-interactive run", "session_id", sess.ID)
+	}
 
 	events, err := c.SubscribeEvents(ctx, ws.ID)
 	if err != nil {
@@ -406,4 +442,68 @@ func validateModelMatches(matches []modelMatch, modelID, label string) (modelMat
 		)
 	}
 	return matches[0], nil
+}
+
+// resolveSession returns the session to use for a non-interactive run.
+// If continueSessionID is set it fetches that session; if useLast is set it
+// returns the most recently updated top-level session; otherwise it creates a
+// new one.
+func resolveSession(ctx context.Context, c *client.Client, wsID, continueSessionID string, useLast bool) (*session.Session, error) {
+	switch {
+	case continueSessionID != "":
+		sess, err := c.GetSession(ctx, wsID, continueSessionID)
+		if err != nil {
+			return nil, fmt.Errorf("session not found: %s", continueSessionID)
+		}
+		if sess.ParentSessionID != "" {
+			return nil, fmt.Errorf("cannot continue a child session: %s", continueSessionID)
+		}
+		return sess, nil
+
+	case useLast:
+		sessions, err := c.ListSessions(ctx, wsID)
+		if err != nil || len(sessions) == 0 {
+			return nil, fmt.Errorf("no sessions found to continue")
+		}
+		last := sessions[0]
+		for _, s := range sessions[1:] {
+			if s.UpdatedAt > last.UpdatedAt && s.ParentSessionID == "" {
+				last = s
+			}
+		}
+		return &last, nil
+
+	default:
+		return c.CreateSession(ctx, wsID, "non-interactive")
+	}
+}
+
+// resolveSessionByID resolves a session ID that may be a full UUID or a hash
+// prefix returned by crush session list.
+func resolveSessionByID(ctx context.Context, c *client.Client, wsID, id string) (*session.Session, error) {
+	if sess, err := c.GetSession(ctx, wsID, id); err == nil {
+		return sess, nil
+	}
+
+	sessions, err := c.ListSessions(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+
+	var matches []session.Session
+	for _, s := range sessions {
+		hash := session.HashID(s.ID)
+		if hash == id || strings.HasPrefix(hash, id) {
+			matches = append(matches, s)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("session %q not found", id)
+	case 1:
+		return &matches[0], nil
+	default:
+		return nil, fmt.Errorf("session ID %q is ambiguous (%d matches)", id, len(matches))
+	}
 }
