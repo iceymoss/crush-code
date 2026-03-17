@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/event"
+	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/server"
 	"github.com/charmbracelet/crush/internal/ui/common"
@@ -233,6 +234,11 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 
 	if shouldEnableMetrics(ws.Config) {
 		event.Init()
+	}
+
+	if ws.Config != nil {
+		logFile := filepath.Join(ws.Config.Options.DataDirectory, "logs", "crush.log")
+		crushlog.Setup(logFile, debug)
 	}
 
 	cleanup := func() { _ = c.DeleteWorkspace(context.Background(), ws.ID) }

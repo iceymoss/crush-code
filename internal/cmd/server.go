@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
+	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/server"
 	"github.com/spf13/cobra"
 )
@@ -39,15 +41,8 @@ var serverCmd = &cobra.Command{
 			return fmt.Errorf("failed to load configuration: %v", err)
 		}
 
-		handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-		if debug {
-			handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-				Level: slog.LevelDebug,
-			})
-		}
-		slog.SetDefault(slog.New(handler))
+		logFile := filepath.Join(config.GlobalCacheDir(), "server-"+safeNameRegexp.ReplaceAllString(serverHost, "_"), "crush.log")
+		crushlog.Setup(logFile, debug)
 
 		hostURL, err := server.ParseHostURL(serverHost)
 		if err != nil {

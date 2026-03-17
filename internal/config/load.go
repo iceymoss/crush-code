@@ -22,7 +22,6 @@ import (
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/home"
-	"github.com/charmbracelet/crush/internal/log"
 	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/qjebbs/go-jsons"
 )
@@ -51,12 +50,6 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if debug {
 		cfg.Options.Debug = true
 	}
-
-	// Setup logs
-	log.Setup(
-		filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)),
-		cfg.Options.Debug,
-	)
 
 	// Load workspace config last so it has highest priority.
 	if wsData, err := os.ReadFile(store.workspacePath); err == nil && len(wsData) > 0 {
