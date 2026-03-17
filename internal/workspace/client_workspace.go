@@ -83,7 +83,7 @@ func (w *ClientWorkspace) CreateSession(ctx context.Context, title string) (sess
 	if err != nil {
 		return session.Session{}, err
 	}
-	return *sess, nil
+	return protoToSession(*sess), nil
 }
 
 func (w *ClientWorkspace) GetSession(ctx context.Context, sessionID string) (session.Session, error) {
@@ -91,19 +91,27 @@ func (w *ClientWorkspace) GetSession(ctx context.Context, sessionID string) (ses
 	if err != nil {
 		return session.Session{}, err
 	}
-	return *sess, nil
+	return protoToSession(*sess), nil
 }
 
 func (w *ClientWorkspace) ListSessions(ctx context.Context) ([]session.Session, error) {
-	return w.client.ListSessions(ctx, w.workspaceID())
+	protoSessions, err := w.client.ListSessions(ctx, w.workspaceID())
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]session.Session, len(protoSessions))
+	for i, s := range protoSessions {
+		sessions[i] = protoToSession(s)
+	}
+	return sessions, nil
 }
 
 func (w *ClientWorkspace) SaveSession(ctx context.Context, sess session.Session) (session.Session, error) {
-	saved, err := w.client.SaveSession(ctx, w.workspaceID(), sess)
+	saved, err := w.client.SaveSession(ctx, w.workspaceID(), sessionToProto(sess))
 	if err != nil {
 		return session.Session{}, err
 	}
-	return *saved, nil
+	return protoToSession(*saved), nil
 }
 
 func (w *ClientWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
@@ -125,15 +133,27 @@ func (w *ClientWorkspace) ParseAgentToolSessionID(sessionID string) (string, str
 // -- Messages --
 
 func (w *ClientWorkspace) ListMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
-	return w.client.ListMessages(ctx, w.workspaceID(), sessionID)
+	msgs, err := w.client.ListMessages(ctx, w.workspaceID(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return protoToMessages(msgs), nil
 }
 
 func (w *ClientWorkspace) ListUserMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
-	return w.client.ListUserMessages(ctx, w.workspaceID(), sessionID)
+	msgs, err := w.client.ListUserMessages(ctx, w.workspaceID(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return protoToMessages(msgs), nil
 }
 
 func (w *ClientWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Message, error) {
-	return w.client.ListAllUserMessages(ctx, w.workspaceID())
+	msgs, err := w.client.ListAllUserMessages(ctx, w.workspaceID())
+	if err != nil {
+		return nil, err
+	}
+	return protoToMessages(msgs), nil
 }
 
 // -- Agent --
@@ -304,7 +324,11 @@ func (w *ClientWorkspace) FileTrackerListReadFiles(ctx context.Context, sessionI
 // -- History --
 
 func (w *ClientWorkspace) ListSessionHistory(ctx context.Context, sessionID string) ([]history.File, error) {
-	return w.client.ListSessionHistoryFiles(ctx, w.workspaceID(), sessionID)
+	files, err := w.client.ListSessionHistoryFiles(ctx, w.workspaceID(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return protoToFiles(files), nil
 }
 
 // -- LSP --
@@ -687,4 +711,35 @@ func protoToMessage(m proto.Message) message.Message {
 	}
 
 	return msg
+}
+
+func protoToMessages(msgs []proto.Message) []message.Message {
+	out := make([]message.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = protoToMessage(m)
+	}
+	return out
+}
+
+func protoToFiles(files []proto.File) []history.File {
+	out := make([]history.File, len(files))
+	for i, f := range files {
+		out[i] = protoToFile(f)
+	}
+	return out
+}
+
+func sessionToProto(s session.Session) proto.Session {
+	return proto.Session{
+		ID:               s.ID,
+		ParentSessionID:  s.ParentSessionID,
+		Title:            s.Title,
+		SummaryMessageID: s.SummaryMessageID,
+		MessageCount:     s.MessageCount,
+		PromptTokens:     s.PromptTokens,
+		CompletionTokens: s.CompletionTokens,
+		Cost:             s.Cost,
+		CreatedAt:        s.CreatedAt,
+		UpdatedAt:        s.UpdatedAt,
+	}
 }

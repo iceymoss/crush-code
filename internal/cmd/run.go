@@ -448,7 +448,7 @@ func validateModelMatches(matches []modelMatch, modelID, label string) (modelMat
 // If continueSessionID is set it fetches that session; if useLast is set it
 // returns the most recently updated top-level session; otherwise it creates a
 // new one.
-func resolveSession(ctx context.Context, c *client.Client, wsID, continueSessionID string, useLast bool) (*session.Session, error) {
+func resolveSession(ctx context.Context, c *client.Client, wsID, continueSessionID string, useLast bool) (*proto.Session, error) {
 	switch {
 	case continueSessionID != "":
 		sess, err := c.GetSession(ctx, wsID, continueSessionID)
@@ -480,7 +480,7 @@ func resolveSession(ctx context.Context, c *client.Client, wsID, continueSession
 
 // resolveSessionByID resolves a session ID that may be a full UUID or a hash
 // prefix returned by crush session list.
-func resolveSessionByID(ctx context.Context, c *client.Client, wsID, id string) (*session.Session, error) {
+func resolveSessionByID(ctx context.Context, c *client.Client, wsID, id string) (*proto.Session, error) {
 	if sess, err := c.GetSession(ctx, wsID, id); err == nil {
 		return sess, nil
 	}
@@ -490,7 +490,7 @@ func resolveSessionByID(ctx context.Context, c *client.Client, wsID, id string) 
 		return nil, err
 	}
 
-	var matches []session.Session
+	var matches []proto.Session
 	for _, s := range sessions {
 		hash := session.HashID(s.ID)
 		if hash == id || strings.HasPrefix(hash, id) {
