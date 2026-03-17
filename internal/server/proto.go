@@ -304,7 +304,11 @@ func (c *controllerV1) handleGetWorkspaceSessions(w http.ResponseWriter, r *http
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, sessions)
+	result := make([]proto.Session, len(sessions))
+	for i, s := range sessions {
+		result[i] = sessionToProto(s)
+	}
+	jsonEncode(w, result)
 }
 
 // handlePostWorkspaceSessions creates a new session in a workspace.
@@ -335,7 +339,7 @@ func (c *controllerV1) handlePostWorkspaceSessions(w http.ResponseWriter, r *htt
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, sess)
+	jsonEncode(w, sessionToProto(sess))
 }
 
 // handleGetWorkspaceSession returns a single session.
@@ -357,7 +361,7 @@ func (c *controllerV1) handleGetWorkspaceSession(w http.ResponseWriter, r *http.
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, sess)
+	jsonEncode(w, sessionToProto(sess))
 }
 
 // handleGetWorkspaceSessionHistory returns the history for a session.
@@ -433,7 +437,7 @@ func (c *controllerV1) handlePutWorkspaceSession(w http.ResponseWriter, r *http.
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, saved)
+	jsonEncode(w, sessionToProto(saved))
 }
 
 // handleDeleteWorkspaceSession deletes a session.
