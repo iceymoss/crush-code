@@ -11,8 +11,10 @@ import (
 	"runtime"
 	"strings"
 
+	_ "github.com/charmbracelet/crush/docs"
 	"github.com/charmbracelet/crush/internal/backend"
 	"github.com/charmbracelet/crush/internal/config"
+	httpswagger "github.com/swaggo/http-swagger/v2"
 )
 
 // ErrServerClosed is returned when the server is closed.
@@ -161,6 +163,7 @@ func NewServer(cfg *config.ConfigStore, network, address string) *Server {
 	mux.HandleFunc("GET /v1/workspaces/{id}/mcp/states", c.handleGetWorkspaceMCPStates)
 	mux.HandleFunc("POST /v1/workspaces/{id}/mcp/refresh-prompts", c.handlePostWorkspaceMCPRefreshPrompts)
 	mux.HandleFunc("POST /v1/workspaces/{id}/mcp/refresh-resources", c.handlePostWorkspaceMCPRefreshResources)
+	mux.Handle("/v1/docs/", httpswagger.WrapHandler)
 	s.h = &http.Server{
 		Protocols: &p,
 		Handler:   s.loggingHandler(mux),

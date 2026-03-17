@@ -4,18 +4,25 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/proto"
 )
 
+// handlePostWorkspaceConfigSet sets a configuration field.
+//
+//	@Summary		Set a config field
+//	@Tags			config
+//	@Accept			json
+//	@Param			id		path	string					true	"Workspace ID"
+//	@Param			request	body	proto.ConfigSetRequest	true	"Config set request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/set [post]
 func (c *controllerV1) handlePostWorkspaceConfigSet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Scope config.Scope `json:"scope"`
-		Key   string       `json:"key"`
-		Value any          `json:"value"`
-	}
+	var req proto.ConfigSetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -29,13 +36,22 @@ func (c *controllerV1) handlePostWorkspaceConfigSet(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceConfigRemove removes a configuration field.
+//
+//	@Summary		Remove a config field
+//	@Tags			config
+//	@Accept			json
+//	@Param			id		path	string						true	"Workspace ID"
+//	@Param			request	body	proto.ConfigRemoveRequest	true	"Config remove request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/remove [post]
 func (c *controllerV1) handlePostWorkspaceConfigRemove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Scope config.Scope `json:"scope"`
-		Key   string       `json:"key"`
-	}
+	var req proto.ConfigRemoveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -49,14 +65,22 @@ func (c *controllerV1) handlePostWorkspaceConfigRemove(w http.ResponseWriter, r 
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceConfigModel updates the preferred model.
+//
+//	@Summary		Set the preferred model
+//	@Tags			config
+//	@Accept			json
+//	@Param			id		path	string						true	"Workspace ID"
+//	@Param			request	body	proto.ConfigModelRequest	true	"Config model request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/model [post]
 func (c *controllerV1) handlePostWorkspaceConfigModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Scope     config.Scope             `json:"scope"`
-		ModelType config.SelectedModelType `json:"model_type"`
-		Model     config.SelectedModel     `json:"model"`
-	}
+	var req proto.ConfigModelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -70,13 +94,22 @@ func (c *controllerV1) handlePostWorkspaceConfigModel(w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceConfigCompact sets compact mode.
+//
+//	@Summary		Set compact mode
+//	@Tags			config
+//	@Accept			json
+//	@Param			id		path	string						true	"Workspace ID"
+//	@Param			request	body	proto.ConfigCompactRequest	true	"Config compact request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/compact [post]
 func (c *controllerV1) handlePostWorkspaceConfigCompact(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Scope   config.Scope `json:"scope"`
-		Enabled bool         `json:"enabled"`
-	}
+	var req proto.ConfigCompactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -90,14 +123,22 @@ func (c *controllerV1) handlePostWorkspaceConfigCompact(w http.ResponseWriter, r
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceConfigProviderKey sets a provider API key.
+//
+//	@Summary		Set provider API key
+//	@Tags			config
+//	@Accept			json
+//	@Param			id		path	string							true	"Workspace ID"
+//	@Param			request	body	proto.ConfigProviderKeyRequest	true	"Config provider key request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/provider-key [post]
 func (c *controllerV1) handlePostWorkspaceConfigProviderKey(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Scope      config.Scope `json:"scope"`
-		ProviderID string       `json:"provider_id"`
-		APIKey     any          `json:"api_key"`
-	}
+	var req proto.ConfigProviderKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -111,6 +152,16 @@ func (c *controllerV1) handlePostWorkspaceConfigProviderKey(w http.ResponseWrite
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceConfigImportCopilot imports Copilot credentials.
+//
+//	@Summary		Import Copilot credentials
+//	@Tags			config
+//	@Produce		json
+//	@Param			id	path		string						true	"Workspace ID"
+//	@Success		200	{object}	proto.ImportCopilotResponse
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/import-copilot [post]
 func (c *controllerV1) handlePostWorkspaceConfigImportCopilot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	token, ok, err := c.backend.ImportCopilot(id)
@@ -118,19 +169,25 @@ func (c *controllerV1) handlePostWorkspaceConfigImportCopilot(w http.ResponseWri
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, struct {
-		Token   any  `json:"token"`
-		Success bool `json:"success"`
-	}{Token: token, Success: ok})
+	jsonEncode(w, proto.ImportCopilotResponse{Token: token, Success: ok})
 }
 
+// handlePostWorkspaceConfigRefreshOAuth refreshes an OAuth token for a provider.
+//
+//	@Summary		Refresh OAuth token
+//	@Tags			config
+//	@Accept			json
+//	@Param			id		path	string							true	"Workspace ID"
+//	@Param			request	body	proto.ConfigRefreshOAuthRequest	true	"Refresh OAuth request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/config/refresh-oauth [post]
 func (c *controllerV1) handlePostWorkspaceConfigRefreshOAuth(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Scope      config.Scope `json:"scope"`
-		ProviderID string       `json:"provider_id"`
-	}
+	var req proto.ConfigRefreshOAuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -144,6 +201,16 @@ func (c *controllerV1) handlePostWorkspaceConfigRefreshOAuth(w http.ResponseWrit
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleGetWorkspaceProjectNeedsInit reports whether a project needs initialization.
+//
+//	@Summary		Check if project needs initialization
+//	@Tags			project
+//	@Produce		json
+//	@Param			id	path		string							true	"Workspace ID"
+//	@Success		200	{object}	proto.ProjectNeedsInitResponse
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/project/needs-init [get]
 func (c *controllerV1) handleGetWorkspaceProjectNeedsInit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	needs, err := c.backend.ProjectNeedsInitialization(id)
@@ -151,11 +218,18 @@ func (c *controllerV1) handleGetWorkspaceProjectNeedsInit(w http.ResponseWriter,
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, struct {
-		NeedsInit bool `json:"needs_init"`
-	}{NeedsInit: needs})
+	jsonEncode(w, proto.ProjectNeedsInitResponse{NeedsInit: needs})
 }
 
+// handlePostWorkspaceProjectInit marks the project as initialized.
+//
+//	@Summary		Mark project as initialized
+//	@Tags			project
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/project/init [post]
 func (c *controllerV1) handlePostWorkspaceProjectInit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := c.backend.MarkProjectInitialized(id); err != nil {
@@ -165,6 +239,16 @@ func (c *controllerV1) handlePostWorkspaceProjectInit(w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleGetWorkspaceProjectInitPrompt returns the project initialization prompt.
+//
+//	@Summary		Get project initialization prompt
+//	@Tags			project
+//	@Produce		json
+//	@Param			id	path		string							true	"Workspace ID"
+//	@Success		200	{object}	proto.ProjectInitPromptResponse
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/project/init-prompt [get]
 func (c *controllerV1) handleGetWorkspaceProjectInitPrompt(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	prompt, err := c.backend.InitializePrompt(id)
@@ -172,17 +256,25 @@ func (c *controllerV1) handleGetWorkspaceProjectInitPrompt(w http.ResponseWriter
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, struct {
-		Prompt string `json:"prompt"`
-	}{Prompt: prompt})
+	jsonEncode(w, proto.ProjectInitPromptResponse{Prompt: prompt})
 }
 
+// handlePostWorkspaceMCPRefreshTools refreshes tools for a named MCP server.
+//
+//	@Summary		Refresh MCP tools
+//	@Tags			mcp
+//	@Accept			json
+//	@Param			id		path	string					true	"Workspace ID"
+//	@Param			request	body	proto.MCPNameRequest	true	"MCP name request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/refresh-tools [post]
 func (c *controllerV1) handlePostWorkspaceMCPRefreshTools(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Name string `json:"name"`
-	}
+	var req proto.MCPNameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -196,13 +288,23 @@ func (c *controllerV1) handlePostWorkspaceMCPRefreshTools(w http.ResponseWriter,
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceMCPReadResource reads a resource from an MCP server.
+//
+//	@Summary		Read MCP resource
+//	@Tags			mcp
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string						true	"Workspace ID"
+//	@Param			request	body		proto.MCPReadResourceRequest	true	"MCP read resource request"
+//	@Success		200		{object}	object
+//	@Failure		400		{object}	proto.Error
+//	@Failure		404		{object}	proto.Error
+//	@Failure		500		{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/read-resource [post]
 func (c *controllerV1) handlePostWorkspaceMCPReadResource(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Name string `json:"name"`
-		URI  string `json:"uri"`
-	}
+	var req proto.MCPReadResourceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -217,14 +319,23 @@ func (c *controllerV1) handlePostWorkspaceMCPReadResource(w http.ResponseWriter,
 	jsonEncode(w, contents)
 }
 
+// handlePostWorkspaceMCPGetPrompt retrieves a prompt from an MCP server.
+//
+//	@Summary		Get MCP prompt
+//	@Tags			mcp
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string						true	"Workspace ID"
+//	@Param			request	body		proto.MCPGetPromptRequest	true	"MCP get prompt request"
+//	@Success		200		{object}	proto.MCPGetPromptResponse
+//	@Failure		400		{object}	proto.Error
+//	@Failure		404		{object}	proto.Error
+//	@Failure		500		{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/get-prompt [post]
 func (c *controllerV1) handlePostWorkspaceMCPGetPrompt(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		ClientID string            `json:"client_id"`
-		PromptID string            `json:"prompt_id"`
-		Args     map[string]string `json:"args"`
-	}
+	var req proto.MCPGetPromptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -236,11 +347,19 @@ func (c *controllerV1) handlePostWorkspaceMCPGetPrompt(w http.ResponseWriter, r 
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, struct {
-		Prompt string `json:"prompt"`
-	}{Prompt: prompt})
+	jsonEncode(w, proto.MCPGetPromptResponse{Prompt: prompt})
 }
 
+// handleGetWorkspaceMCPStates returns the state of all MCP clients.
+//
+//	@Summary		Get MCP client states
+//	@Tags			mcp
+//	@Produce		json
+//	@Param			id	path		string						true	"Workspace ID"
+//	@Success		200	{object}	map[string]proto.MCPClientInfo
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/states [get]
 func (c *controllerV1) handleGetWorkspaceMCPStates(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	states := c.backend.MCPGetStates(id)
@@ -259,12 +378,22 @@ func (c *controllerV1) handleGetWorkspaceMCPStates(w http.ResponseWriter, r *htt
 	jsonEncode(w, result)
 }
 
+// handlePostWorkspaceMCPRefreshPrompts refreshes prompts for a named MCP server.
+//
+//	@Summary		Refresh MCP prompts
+//	@Tags			mcp
+//	@Accept			json
+//	@Param			id		path	string					true	"Workspace ID"
+//	@Param			request	body	proto.MCPNameRequest	true	"MCP name request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/refresh-prompts [post]
 func (c *controllerV1) handlePostWorkspaceMCPRefreshPrompts(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Name string `json:"name"`
-	}
+	var req proto.MCPNameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
@@ -275,12 +404,22 @@ func (c *controllerV1) handlePostWorkspaceMCPRefreshPrompts(w http.ResponseWrite
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceMCPRefreshResources refreshes resources for a named MCP server.
+//
+//	@Summary		Refresh MCP resources
+//	@Tags			mcp
+//	@Accept			json
+//	@Param			id		path	string					true	"Workspace ID"
+//	@Param			request	body	proto.MCPNameRequest	true	"MCP name request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/refresh-resources [post]
 func (c *controllerV1) handlePostWorkspaceMCPRefreshResources(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req struct {
-		Name string `json:"name"`
-	}
+	var req proto.MCPNameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")

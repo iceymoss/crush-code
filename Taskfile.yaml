@@ -185,6 +185,19 @@ tasks:
       - go get charm.land/catwalk
       - go mod tidy
 
+  swag:
+    desc: Generate OpenAPI spec from swag annotations
+    cmds:
+      - go run github.com/swaggo/swag/cmd/swag@v1.16.6 init --generalInfo main.go --dir . --output docs --parseDependency --parseInternal --parseDepth 5
+    sources:
+      - internal/server/*.go
+      - internal/proto/*.go
+      - main.go
+    generates:
+      - docs/docs.go
+      - docs/swagger.json
+      - docs/swagger.yaml
+
   sqlc:
     desc: Generate code using SQLC
     cmds:
