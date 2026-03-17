@@ -22,6 +22,23 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
+// ListWorkspaces retrieves all workspaces from the server.
+func (c *Client) ListWorkspaces(ctx context.Context) ([]proto.Workspace, error) {
+	rsp, err := c.get(ctx, "/workspaces", nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspaces: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to list workspaces: status code %d", rsp.StatusCode)
+	}
+	var workspaces []proto.Workspace
+	if err := json.NewDecoder(rsp.Body).Decode(&workspaces); err != nil {
+		return nil, fmt.Errorf("failed to decode workspaces: %w", err)
+	}
+	return workspaces, nil
+}
+
 // CreateWorkspace creates a new workspace on the server.
 func (c *Client) CreateWorkspace(ctx context.Context, ws proto.Workspace) (*proto.Workspace, error) {
 	rsp, err := c.post(ctx, "/workspaces", nil, jsonBody(ws), http.Header{"Content-Type": []string{"application/json"}})
