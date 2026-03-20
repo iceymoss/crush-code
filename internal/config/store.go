@@ -18,15 +18,44 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ConfigStore is the single entry point for all config access. It owns the
-// pure-data Config, runtime state (working directory, resolver, known
-// providers), and persistence to both global and workspace config files.
+// ConfigStore 是整个 crush 应用访问配置的“唯一入口” (Single Entry Point)。
+// 还掌握着运行时的上下文状态，并且负责将配置持久化（保存）到磁盘上。
+// 💡 架构亮点：这是典型的 Repository (仓储) 模式或 Manager 模式。
 type ConfigStore struct {
-	config         *Config
-	workingDir     string
-	resolver       VariableResolver
-	globalDataPath string // ~/.local/share/crush/crush.json
-	workspacePath  string // .crush/crush.json
+	// 纯数据层：剖析config 包含了大模型、MCP、LSP、权限等一切设置的超级结构体。
+	// 外层业务代码如果想拿配置，通常会调用 configStore.Config() 来获取这个指针。
+	config *Config
+
+	// 运行时状态：当前终端所在的工作目录。
+	// 极其重要！因为 crush 需要知道当前在哪个项目里，才能正确地去启动对应项目的 LSP，
+	// 或者去寻找当前目录下的 .cursorrules 和 .crush 隐藏文件夹。
+	workingDir string
+
+	// 变量解析器。
+	// 就是我们上一节看到的那个能把 "Bearer $DEEPSEEK_API_KEY" 变成真实密钥的魔法棒。
+	// 把它存在 Store 里，就可以在需要读取任何配置时，实时动态地注入操作系统环境变量。
+	resolver VariableResolver
+
+	// ----------------------------------------------------------------
+	// 经典 CLI 架构：级联配置 (Cascading Configuration)
+	// ----------------------------------------------------------------
+
+	// 全局数据路径 (Global Config)。
+	// 比如 `~/.local/share/crush/crush.json` 或 `~/.config/crush/crush.json`。
+	// 这里存的是你这个“人”的通用偏好：比如你默认喜欢用 DeepSeek，你的全局 API Key，你喜欢的 TUI 主题色。
+	// 在任何目录下敲 crush，都会默认先加载这份基础配置。
+	globalDataPath string
+
+	// 工作区数据路径 (Workspace Config)。
+	// 比如当前项目目录下的 `.crush/crush.json`。
+	// 这里存的是针对“当前项目”的特殊偏好：比如这个项目是老项目，你在这里单独配置了 "Model: gpt-4"，
+	// 那么当 crush 启动时，这里的配置会**覆盖 (Override)** 全局配置！
+	// 就像 git 的 `~/.gitconfig` 和项目里的 `.git/config` 的关系一样。
+	workspacePath string
+
+	// 系统已知/原生支持的所有提供商列表。
+	// Catwalk 是 crush 底层用的一个大模型抽象库。这个切片里存了系统硬编码认识的所有厂商（OpenAI, Anthropic 等）。
+	// 在做配置合并或展示可用模型列表时，Store 会拿用户的配置和这个已知列表做比对。
 	knownProviders []catwalk.Provider
 }
 

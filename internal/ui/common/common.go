@@ -36,7 +36,7 @@ func (c *Common) Store() *config.ConfigStore {
 	return c.App.Store()
 }
 
-// DefaultCommon returns the default common UI configurations.
+// DefaultCommon 返回默认的通用界面配置.
 func DefaultCommon(app *app.App) *Common {
 	s := styles.DefaultStyles()
 	return &Common{

@@ -578,13 +578,13 @@ func (app *App) Subscribe(program *tea.Program) {
 	}
 }
 
-// Shutdown performs a graceful shutdown of the application.
+// Shutdown 执行优雅的应用程序关闭
 func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()
 
-	// First, cancel all agents and wait for them to finish. This must complete
-	// before closing the DB so agents can finish writing their state.
+	// 首先，取消所有agent，等他们完成。这必须完成
+	// 在关闭数据库之前，这样代理人才能完成写入他们的状态。
 	if app.AgentCoordinator != nil {
 		app.AgentCoordinator.CancelAll()
 	}
@@ -592,11 +592,11 @@ func (app *App) Shutdown() {
 	// Now run remaining cleanup tasks in parallel.
 	var wg sync.WaitGroup
 
-	// Shared shutdown context for all timeout-bounded cleanup.
+	// 所有超时范围内清理的共享关机上下文。
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(app.globalCtx), 5*time.Second)
 	defer cancel()
 
-	// Send exit event
+	// 发送退出事件
 	wg.Go(func() {
 		event.AppExited()
 	})
@@ -611,7 +611,7 @@ func (app *App) Shutdown() {
 		app.LSPManager.KillAll(shutdownCtx)
 	})
 
-	// Call all cleanup functions.
+	// 调用所有清理函数.
 	for _, cleanup := range app.cleanupFuncs {
 		if cleanup != nil {
 			wg.Go(func() {

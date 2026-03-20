@@ -75,28 +75,39 @@ crush --yolo
 crush --data-dir /path/to/custom/.crush
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// 设置app, 并且添加进度条
 		app, err := setupAppWithProgressBar(cmd)
 		if err != nil {
 			return err
 		}
+
+		// 退出时释放各种资源
 		defer app.Shutdown()
 
+		// 发送App initialized事件
 		event.AppInitialized()
 
-		// Set up the TUI.
+		// Set up the TUI，环境变量捕获.
 		var env uv.Environ = os.Environ()
 
+		// 创建common,返回默认的通用界面配置
 		com := common.DefaultCommon(app)
+
+		// 创建终端
 		model := ui.New(com)
 
+		// 配置 Bubble Tea 引擎
 		program := tea.NewProgram(
 			model,
 			tea.WithEnvironment(env),
 			tea.WithContext(cmd.Context()),
 			tea.WithFilter(ui.MouseEventFilter), // Filter mouse events based on focus state
 		)
+
+		// 订阅程序，app可以订阅program，向program发送处理时间
 		go app.Subscribe(program)
 
+		// Bubble Tea 引擎自动监控键盘输入和鼠标点击，并且处理用户输入。
 		if _, err := program.Run(); err != nil {
 			event.Error(err)
 			slog.Error("TUI run error", "error", err)
@@ -161,7 +172,10 @@ func supportsProgressBar() bool {
 	return isWindowsTerminal || strings.Contains(strings.ToLower(termProg), "ghostty")
 }
 
+// setupAppWithProgressBar 设置app，会在应用中添加进度条。
 func setupAppWithProgressBar(cmd *cobra.Command) (*app.App, error) {
+	// 处理交互式和非交互式模式的通用设置逻辑。
+	// 它会返回应用实例、配置、清理功能以及任何错误。
 	app, err := setupApp(cmd)
 	if err != nil {
 		return nil, err
@@ -177,52 +191,98 @@ func setupAppWithProgressBar(cmd *cobra.Command) (*app.App, error) {
 	return app, nil
 }
 
-// setupApp handles the common setup logic for both interactive and non-interactive modes.
-// It returns the app instance, config, cleanup function, and any error.
+// setupApp 处理交互式和非交互式模式的通用设置逻辑。
+// 它会返回应用实例、配置、清理功能以及任何错误。
+// 💡 架构设计：这是一个典型的“工厂方法”或“依赖注入容器”的雏形。
 func setupApp(cmd *cobra.Command) (*app.App, error) {
+	// ---------------------------------------------------------
+	// 1. 提取命令行运行时参数 (Flags)
+	// ---------------------------------------------------------
 	debug, _ := cmd.Flags().GetBool("debug")
 	yolo, _ := cmd.Flags().GetBool("yolo")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
+
+	// 继承 Cobra 框架的上下文 (能够捕获用户的 Ctrl+C 退出信号)
 	ctx := cmd.Context()
 
+	// ---------------------------------------------------------
+	// 2. 确立阵地 (工作目录)
+	// ---------------------------------------------------------
+	// 解析当前的工作目录。如果用户传了 `--cwd /path/to/project`，
+	// 这里就会把进程的工作目录强行切换过去，让 AI 认为自己就在那个目录里。
 	cwd, err := ResolveCwd(cmd)
 	if err != nil {
 		return nil, err
 	}
 
+	// ---------------------------------------------------------
+	// 3. 加载核心配置大脑
+	// ---------------------------------------------------------
+	// 这里面会执行查找全局配置、读取环境变量、合并工作区配置等一系列复杂操作。
 	store, err := config.Init(cwd, dataDir, debug)
 	if err != nil {
 		return nil, err
 	}
 
+	// 获取纯数据配置指针
 	cfg := store.Config()
+
+	// ---------------------------------------------------------
+	// 4. 安全权限覆写
+	// ---------------------------------------------------------
+	// 兜底初始化
 	if cfg.Permissions == nil {
 		cfg.Permissions = &config.Permissions{}
 	}
+
+	// 如果运行时带了这个参数，这个字段就会变成 true。此时 AI 拥有最高神权
+	// 调用任何工具、执行任何删库跑路的命令都不再弹窗问你，直接执行！（极其危险，谨慎使用）
 	cfg.Permissions.SkipRequests = yolo
 
+	// ---------------------------------------------------------
+	// 5. 工作区脚手架建设
+	// ---------------------------------------------------------
+	// 在当前目录下创建 `.crush` 隐藏文件夹。
+	// 并且极其贴心地往里面塞一个 `.gitignore` 文件（内容是 `*`），
+	// 保证你绝对不会不小心把本地的 AI 聊天记录提交到 Git 仓库里去！
 	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
 		return nil, err
 	}
 
-	// Register this project in the centralized projects list.
+	// 将该项目注册到全局的“最近使用项目”列表中。
+	// 这样以后可能在 UI 里实现一个 "Open Recent" 的功能，快速切换 AI 工作区。
 	if err := projects.Register(cwd, cfg.Options.DataDirectory); err != nil {
 		slog.Warn("Failed to register project", "error", err)
-		// Non-fatal: continue even if registration fails
+		// 容错处理：即使注册失败也不影响当前使用，继续往下走
 	}
 
-	// Connect to DB; this will also run migrations.
+	// ---------------------------------------------------------
+	// 6. 核心存储层挂载 (SQLite)
+	// ---------------------------------------------------------
+	// 连接本地数据库。如果数据库文件不存在，会自动创建。
+	// 并且在连接成功后，会自动执行 SQL 迁移脚本 (Migrations) 建表。
 	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
 	if err != nil {
 		return nil, err
 	}
 
+	// ---------------------------------------------------------
+	// 7. 终极装配：创建 App 实例
+	// ---------------------------------------------------------
+	// 将上下文 (ctx)、数据库连接池 (conn) 和 配置大管家 (store)
+	// 全部注入到业务核心结构体 `app.App` 中。
+	// 这个 `appInstance` 就是之后真正在后台跑大模型、发事件流的核心引擎！
 	appInstance, err := app.New(ctx, conn, store)
 	if err != nil {
 		slog.Error("Failed to create app instance", "error", err)
 		return nil, err
 	}
 
+	// ---------------------------------------------------------
+	// 8. 遥测与事件总线启动
+	// ---------------------------------------------------------
+	// 如果用户没有禁用遥测（Metrics），就初始化事件总线，
+	// 用于收集匿名崩溃日志或性能指标。
 	if shouldEnableMetrics(cfg) {
 		event.Init()
 	}
@@ -262,15 +322,19 @@ func MaybePrependStdin(prompt string) (string, error) {
 	return string(bts) + "\n\n" + prompt, nil
 }
 
+// ResolveCwd 解析当前工作目录
 func ResolveCwd(cmd *cobra.Command) (string, error) {
 	cwd, _ := cmd.Flags().GetString("cwd")
 	if cwd != "" {
+		// 更改目录
 		err := os.Chdir(cwd)
 		if err != nil {
 			return "", fmt.Errorf("failed to change directory: %v", err)
 		}
 		return cwd, nil
 	}
+
+	// 获取当前工作目录
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get current working directory: %v", err)

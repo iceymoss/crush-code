@@ -56,7 +56,7 @@ import (
 	"github.com/charmbracelet/x/editor"
 )
 
-// MouseScrollThreshold defines how many lines to scroll the chat when a mouse
+// MouseScrollThreshold 定义鼠标时要滚动聊天的行数
 // wheel event occurs.
 const MouseScrollThreshold = 5
 
@@ -130,7 +130,7 @@ type (
 	}
 )
 
-// UI represents the main user interface model.
+// UI 表示主要的用户界面模型.
 type UI struct {
 	com          *common.Common
 	session      *session.Session
@@ -334,7 +334,7 @@ func New(com *common.Common) *UI {
 	return ui
 }
 
-// Init initializes the UI model.
+// Init 初始化UI模型.
 func (m *UI) Init() tea.Cmd {
 	var cmds []tea.Cmd
 	if m.state == uiOnboarding {
@@ -342,9 +342,9 @@ func (m *UI) Init() tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
-	// load the user commands async
+	// 用户命令异步加载
 	cmds = append(cmds, m.loadCustomCommands())
-	// load prompt history async
+	// 加载提示 历史 异步
 	cmds = append(cmds, m.loadPromptHistory())
 	return tea.Batch(cmds...)
 }
@@ -411,7 +411,7 @@ func (m *UI) loadMCPrompts() tea.Msg {
 	return mcpPromptsLoadedMsg{Prompts: prompts}
 }
 
-// Update handles updates to the UI model.
+// Update 处理UI模型的更新.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {

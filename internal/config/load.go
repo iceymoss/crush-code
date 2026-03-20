@@ -29,86 +29,130 @@ import (
 
 const defaultCatwalkURL = "https://catwalk.charm.sh"
 
-// Load loads the configuration from the default paths and returns a
-// ConfigStore that owns both the pure-data Config and all runtime state.
+// Load 是配置加载的绝对入口。
+// 它从默认路径读取配置文件，并返回一个包含了纯数据(Config)和运行时状态的 ConfigStore 大管家。
 func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
+	// ----------------------------------------------------------------
+	// 阶段 1：基础配置加载与兜底
+	// ----------------------------------------------------------------
+
+	// 1. 查找所有潜在的配置文件路径（比如 ~/.config/crush/crush.json，/etc/crush...）
 	configPaths := lookupConfigs(workingDir)
 
+	// 2. 将这些路径里的 JSON 文件读取出来，并合并成一个基础的 cfg 结构体。
+	// 如果你在多个地方配了文件，这里底层会做按权重的反序列化合并。
 	cfg, err := loadFromConfigPaths(configPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config from paths %v: %w", configPaths, err)
 	}
 
+	// 3. 填充默认值。
+	// 如果用户 JSON 里没填某些必填项（比如数据目录名），在这里补全兜底。
 	cfg.setDefaults(workingDir, dataDir)
 
+	// 4. 实例化我们上一节讲的“配置大管家” (ConfigStore)。
 	store := &ConfigStore{
 		config:         cfg,
 		workingDir:     workingDir,
-		globalDataPath: GlobalConfigData(),
-		workspacePath:  filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
+		globalDataPath: GlobalConfigData(), // 获取系统级的全局配置文件路径
+		// 构建当前工作区（项目级）的独立配置文件路径，通常是 .crush/crush.json
+		workspacePath: filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
 	}
 
+	// 命令行传入的 debug 参数优先级最高，覆盖文件里的配置
 	if debug {
 		cfg.Options.Debug = true
 	}
 
-	// Setup logs
+	// 5. 尽早启动日志系统，这样接下来的加载如果出错了就能记录下来。
 	log.Setup(
 		filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)),
 		cfg.Options.Debug,
 	)
 
-	// Load workspace config last so it has highest priority.
+	// ----------------------------------------------------------------
+	// 阶段 2：工作区（项目级）配置的终极覆盖
+	// ----------------------------------------------------------------
+
+	// 极其重要的“级联覆盖”逻辑！
+	// 检查当前项目目录下是不是也有一个 .crush/crush.json。
 	if wsData, err := os.ReadFile(store.workspacePath); err == nil && len(wsData) > 0 {
+		// 如果有，把当前的基础配置和工作区配置扔进合并器。
+		// 工作区的配置会强行覆盖掉全局的同名字段（比如你在这个项目里想单独用 gpt-4）。
 		merged, mergeErr := loadFromBytes(append([][]byte{mustMarshalConfig(cfg)}, wsData))
 		if mergeErr == nil {
-			// Preserve defaults that setDefaults already applied.
-			dataDir := cfg.Options.DataDirectory
-			*cfg = *merged
-			cfg.setDefaults(workingDir, dataDir)
-			store.config = cfg
+			dataDir := cfg.Options.DataDirectory // 保护关键的数据目录路径不被瞎覆盖
+			*cfg = *merged                       // 指针解引用，狸猫换太子，用合并后的配置替换旧配置
+			cfg.setDefaults(workingDir, dataDir) // 重新过一遍兜底逻辑
+			store.config = cfg                   // 更新管家手里的数据
 		}
 	}
 
+	// ----------------------------------------------------------------
+	// 阶段 3：环境探测与【防御性编程】
+	// ----------------------------------------------------------------
+
+	// 【神仙级防御设计】：检查当前目录是不是一个 Git 仓库！
 	if !isInsideWorktree() {
+		// 为什么要做这个检查？
+		// 如果你在根目录 `/` 或者 `C:\` 下不小心敲了 `crush`，然后让 AI 帮你找个文件。
+		// AI 会调用 `ls` 工具递归扫描整个硬盘！你的内存会爆，Token 费用也会上天。
+		// 所以，如果不是在一个受控的 Git 项目里，强行把 AI 的视力限制成“只能看当前目录下 2 层，最多 100 个文件”！
 		const depth = 2
 		const items = 100
 		slog.Warn("No git repository detected in working directory, will limit file walk operations", "depth", depth, "items", items)
+
+		// assignIfNil 是一个辅助函数：如果配置文件里没限制（是个 nil 指针），就在这里强行给它赋值！
 		assignIfNil(&cfg.Tools.Ls.MaxDepth, depth)
 		assignIfNil(&cfg.Tools.Ls.MaxItems, items)
 		assignIfNil(&cfg.Options.TUI.Completions.MaxDepth, depth)
 		assignIfNil(&cfg.Options.TUI.Completions.MaxItems, items)
 	}
 
+	// TUI 兼容性黑科技：
+	// Mac 自带的 Terminal 在渲染某些背景色时有严重的 Bug，
+	// 如果探测到是 Apple Terminal，强行开启界面的“透明背景模式”来规避渲染错误。
 	if isAppleTerminal() {
 		slog.Warn("Detected Apple Terminal, enabling transparent mode")
 		assignIfNil(&cfg.Options.TUI.Transparent, true)
 	}
 
-	// Load known providers, this loads the config from catwalk
+	// ----------------------------------------------------------------
+	// 阶段 4：组装下游组件 (Providers, Models, Agents)
+	// ----------------------------------------------------------------
+
+	// 从底层 catwalk 库加载系统原生认识的所有厂商清单（OpenAI, Google 等）
 	providers, err := Providers(cfg)
 	if err != nil {
 		return nil, err
 	}
 	store.knownProviders = providers
 
+	// 初始化操作系统的环境变量池和解析器
 	env := env.New()
-	// Configure providers
 	valueResolver := NewShellVariableResolver(env)
 	store.resolver = valueResolver
+
+	// 让所有的 Provider 配置开始解析自己的 API Key（把 $OPENAI_API_KEY 替换成真实的字符串）
 	if err := cfg.configureProviders(store, env, valueResolver, store.knownProviders); err != nil {
 		return nil, fmt.Errorf("failed to configure providers: %w", err)
 	}
 
+	// 如果一个能用的 API Key 都没配，报个警，但允许程序以“白板模式”启动
 	if !cfg.IsConfigured() {
 		slog.Warn("No providers configured")
 		return store, nil
 	}
 
+	// 验证用户选定的 "large" 和 "small" 模型到底能不能和刚才加载的厂商对上号
 	if err := configureSelectedModels(store, store.knownProviders); err != nil {
 		return nil, fmt.Errorf("failed to configure selected models: %w", err)
 	}
+
+	// 最后一步！根据上面的大模型，装配好 "Coder" 和 "Task" 两个打工 Agent。
 	store.SetupAgents()
+
+	// 组装完成，将这个终极武器库交还给 Main 函数！
 	return store, nil
 }
 
