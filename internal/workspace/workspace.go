@@ -107,7 +107,7 @@ type Workspace interface {
 	LSPStart(ctx context.Context, path string)
 	LSPStopAll(ctx context.Context)
 	LSPGetStates() map[string]LSPClientInfo
-	LSPGetClient(name string) (*lsp.Client, bool)
+	LSPGetDiagnosticCounts(name string) lsp.DiagnosticCounts
 
 	// Config (read-only data)
 	Config() *config.Config

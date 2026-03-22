@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // ClientWorkspace implements the Workspace interface by delegating all
@@ -359,8 +360,27 @@ func (w *ClientWorkspace) LSPGetStates() map[string]LSPClientInfo {
 	return result
 }
 
-func (w *ClientWorkspace) LSPGetClient(_ string) (*lsp.Client, bool) {
-	return nil, false
+func (w *ClientWorkspace) LSPGetDiagnosticCounts(name string) lsp.DiagnosticCounts {
+	diags, err := w.client.GetLSPDiagnostics(context.Background(), w.workspaceID(), name)
+	if err != nil {
+		return lsp.DiagnosticCounts{}
+	}
+	var counts lsp.DiagnosticCounts
+	for _, fileDiags := range diags {
+		for _, d := range fileDiags {
+			switch d.Severity {
+			case protocol.SeverityError:
+				counts.Error++
+			case protocol.SeverityWarning:
+				counts.Warning++
+			case protocol.SeverityInformation:
+				counts.Information++
+			case protocol.SeverityHint:
+				counts.Hint++
+			}
+		}
+	}
+	return counts
 }
 
 // -- Config (read-only) --
