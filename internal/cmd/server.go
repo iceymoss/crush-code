@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/server"
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +43,12 @@ var serverCmd = &cobra.Command{
 		}
 
 		logFile := filepath.Join(config.GlobalCacheDir(), "server-"+safeNameRegexp.ReplaceAllString(serverHost, "_"), "crush.log")
-		crushlog.Setup(logFile, debug)
+
+		if term.IsTerminal(os.Stderr.Fd()) {
+			crushlog.Setup(logFile, debug, os.Stderr)
+		} else {
+			crushlog.Setup(logFile, debug)
+		}
 
 		hostURL, err := server.ParseHostURL(serverHost)
 		if err != nil {
