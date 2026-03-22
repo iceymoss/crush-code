@@ -21,17 +21,22 @@ import (
 	fang "charm.land/fang/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/event"
 	crushlog "github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/projects"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/server"
+	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	ui "github.com/charmbracelet/crush/internal/ui/model"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/crush/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -96,15 +101,14 @@ crush --continue
 		sessionID, _ := cmd.Flags().GetString("session")
 		continueLast, _ := cmd.Flags().GetBool("continue")
 
-		c, ws, cleanup, err := connectToServer(cmd)
+		ws, cleanup, err := setupWorkspaceWithProgressBar(cmd)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
 
-		// Resolve session ID if provided.
 		if sessionID != "" {
-			sess, err := resolveSessionByID(cmd.Context(), c, ws.ID, sessionID)
+			sess, err := resolveWorkspaceSessionID(cmd.Context(), ws, sessionID)
 			if err != nil {
 				return err
 			}
@@ -113,15 +117,7 @@ crush --continue
 
 		event.AppInitialized()
 
-		clientWs := workspace.NewClientWorkspace(c, *ws)
-
-		if ws.Config.IsConfigured() {
-			if err := clientWs.InitCoderAgent(cmd.Context()); err != nil {
-				slog.Error("Failed to initialize coder agent", "error", err)
-			}
-		}
-
-		com := common.DefaultCommon(clientWs)
+		com := common.DefaultCommon(ws)
 		model := ui.New(com, sessionID, continueLast)
 
 		var env uv.Environ = os.Environ()
@@ -131,7 +127,7 @@ crush --continue
 			tea.WithContext(cmd.Context()),
 			tea.WithFilter(ui.MouseEventFilter),
 		)
-		go clientWs.Subscribe(program)
+		go ws.Subscribe(program)
 
 		if _, err := program.Run(); err != nil {
 			event.Error(err)
@@ -195,6 +191,120 @@ func supportsProgressBar() bool {
 	_, isWindowsTerminal := os.LookupEnv("WT_SESSION")
 
 	return isWindowsTerminal || strings.Contains(strings.ToLower(termProg), "ghostty")
+}
+
+// useClientServer returns true when the client/server architecture is
+// enabled via the CRUSH_CLIENT_SERVER environment variable.
+func useClientServer() bool {
+	v, _ := strconv.ParseBool(os.Getenv("CRUSH_CLIENT_SERVER"))
+	return v
+}
+
+// setupWorkspaceWithProgressBar wraps setupWorkspace with an optional
+// terminal progress bar shown during initialization.
+func setupWorkspaceWithProgressBar(cmd *cobra.Command) (workspace.Workspace, func(), error) {
+	showProgress := supportsProgressBar()
+	if showProgress {
+		_, _ = fmt.Fprintf(os.Stderr, ansi.SetIndeterminateProgressBar)
+	}
+
+	ws, cleanup, err := setupWorkspace(cmd)
+
+	if showProgress {
+		_, _ = fmt.Fprintf(os.Stderr, ansi.ResetProgressBar)
+	}
+
+	return ws, cleanup, err
+}
+
+// setupWorkspace returns a Workspace and cleanup function. When
+// CRUSH_CLIENT_SERVER=1, it connects to a server process and returns a
+// ClientWorkspace. Otherwise it creates an in-process app.App and
+// returns an AppWorkspace.
+func setupWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
+	if useClientServer() {
+		return setupClientServerWorkspace(cmd)
+	}
+	return setupLocalWorkspace(cmd)
+}
+
+// setupLocalWorkspace creates an in-process app.App and wraps it in an
+// AppWorkspace.
+func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
+	debug, _ := cmd.Flags().GetBool("debug")
+	yolo, _ := cmd.Flags().GetBool("yolo")
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+	ctx := cmd.Context()
+
+	cwd, err := ResolveCwd(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	store, err := config.Init(cwd, dataDir, debug)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cfg := store.Config()
+	store.Overrides().SkipPermissionRequests = yolo
+
+	if err := os.MkdirAll(cfg.Options.DataDirectory, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.DataDirectory, err)
+	}
+
+	gitIgnorePath := filepath.Join(cfg.Options.DataDirectory, ".gitignore")
+	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
+		if err := os.WriteFile(gitIgnorePath, []byte("*\n"), 0o644); err != nil {
+			return nil, nil, fmt.Errorf("failed to create .gitignore file: %q %w", gitIgnorePath, err)
+		}
+	}
+
+	if err := projects.Register(cwd, cfg.Options.DataDirectory); err != nil {
+		slog.Warn("Failed to register project", "error", err)
+	}
+
+	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "crush.log")
+	crushlog.Setup(logFile, debug)
+
+	appInstance, err := app.New(ctx, conn, store)
+	if err != nil {
+		_ = conn.Close()
+		slog.Error("Failed to create app instance", "error", err)
+		return nil, nil, err
+	}
+
+	if shouldEnableMetrics(cfg) {
+		event.Init()
+	}
+
+	ws := workspace.NewAppWorkspace(appInstance, store)
+	cleanup := func() { appInstance.Shutdown() }
+	return ws, cleanup, nil
+}
+
+// setupClientServerWorkspace connects to a server process and wraps the
+// result in a ClientWorkspace.
+func setupClientServerWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
+	c, protoWs, cleanupServer, err := connectToServer(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	clientWs := workspace.NewClientWorkspace(c, *protoWs)
+
+	if protoWs.Config.IsConfigured() {
+		if err := clientWs.InitCoderAgent(cmd.Context()); err != nil {
+			slog.Error("Failed to initialize coder agent", "error", err)
+		}
+	}
+
+	return clientWs, cleanupServer, nil
 }
 
 // connectToServer ensures the server is running, creates a client and
@@ -424,6 +534,38 @@ func MaybePrependStdin(prompt string) (string, error) {
 		return prompt, err
 	}
 	return string(bts) + "\n\n" + prompt, nil
+}
+
+// resolveWorkspaceSessionID resolves a session ID that may be a full
+// UUID, full hash, or hash prefix. Works against the Workspace
+// interface so both local and client/server paths get hash prefix
+// support.
+func resolveWorkspaceSessionID(ctx context.Context, ws workspace.Workspace, id string) (session.Session, error) {
+	if sess, err := ws.GetSession(ctx, id); err == nil {
+		return sess, nil
+	}
+
+	sessions, err := ws.ListSessions(ctx)
+	if err != nil {
+		return session.Session{}, err
+	}
+
+	var matches []session.Session
+	for _, s := range sessions {
+		hash := session.HashID(s.ID)
+		if hash == id || strings.HasPrefix(hash, id) {
+			matches = append(matches, s)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return session.Session{}, fmt.Errorf("session not found: %s", id)
+	case 1:
+		return matches[0], nil
+	default:
+		return session.Session{}, fmt.Errorf("session ID %q is ambiguous (%d matches)", id, len(matches))
+	}
 }
 
 func ResolveCwd(cmd *cobra.Command) (string, error) {
