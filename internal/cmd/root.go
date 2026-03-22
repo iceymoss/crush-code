@@ -43,9 +43,12 @@ func init() {
 	rootCmd.PersistentFlags().StringP("cwd", "c", "", "Current working directory")
 	rootCmd.PersistentFlags().StringP("data-dir", "D", "", "Custom crush data directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
-	rootCmd.PersistentFlags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
 	rootCmd.PersistentFlags().StringVarP(&clientHost, "host", "H", server.DefaultHost(), "Connect to a specific crush server host (for advanced users)")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
+	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
+	rootCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
+	rootCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
+	rootCmd.MarkFlagsMutuallyExclusive("session", "continue")
 
 	rootCmd.AddCommand(
 		runCmd,
@@ -82,13 +85,31 @@ crush --yolo
 
 # Run with custom data directory
 crush --data-dir /path/to/custom/.crush
+
+# Continue a previous session
+crush --session {session-id}
+
+# Continue the most recent session
+crush --continue
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		sessionID, _ := cmd.Flags().GetString("session")
+		continueLast, _ := cmd.Flags().GetBool("continue")
+
 		c, ws, cleanup, err := connectToServer(cmd)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
+
+		// Resolve session ID if provided.
+		if sessionID != "" {
+			sess, err := resolveSessionByID(cmd.Context(), c, ws.ID, sessionID)
+			if err != nil {
+				return err
+			}
+			sessionID = sess.ID
+		}
 
 		event.AppInitialized()
 
@@ -101,7 +122,7 @@ crush --data-dir /path/to/custom/.crush
 		}
 
 		com := common.DefaultCommon(clientWs)
-		model := ui.New(com)
+		model := ui.New(com, sessionID, continueLast)
 
 		var env uv.Environ = os.Environ()
 		program := tea.NewProgram(

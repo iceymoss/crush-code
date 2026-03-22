@@ -193,6 +193,32 @@ type MCPResourceContents struct {
 	Blob     []byte `json:"blob,omitempty"`
 }
 
+// EnableDockerMCP enables the Docker MCP server on the workspace.
+func (c *Client) EnableDockerMCP(ctx context.Context, id string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/mcp/docker/enable", id), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to enable docker MCP: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to enable docker MCP: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
+// DisableDockerMCP disables the Docker MCP server on the workspace.
+func (c *Client) DisableDockerMCP(ctx context.Context, id string) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/mcp/docker/disable", id), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to disable docker MCP: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to disable docker MCP: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // RefreshMCPTools refreshes tools for a named MCP server.
 func (c *Client) RefreshMCPTools(ctx context.Context, id, name string) error {
 	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/mcp/refresh-tools", id), nil, jsonBody(struct {

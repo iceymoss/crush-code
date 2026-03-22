@@ -135,6 +135,8 @@ type Workspace interface {
 	RefreshMCPTools(ctx context.Context, name string)
 	ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error)
 	GetMCPPrompt(clientID, promptID string, args map[string]string) (string, error)
+	EnableDockerMCP(ctx context.Context) error
+	DisableDockerMCP() error
 
 	// Events
 	Subscribe(program *tea.Program)

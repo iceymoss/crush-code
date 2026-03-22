@@ -509,6 +509,14 @@ func (w *ClientWorkspace) GetMCPPrompt(clientID, promptID string, args map[strin
 	return w.client.GetMCPPrompt(context.Background(), w.workspaceID(), clientID, promptID, args)
 }
 
+func (w *ClientWorkspace) EnableDockerMCP(ctx context.Context) error {
+	return w.client.EnableDockerMCP(ctx, w.workspaceID())
+}
+
+func (w *ClientWorkspace) DisableDockerMCP() error {
+	return w.client.DisableDockerMCP(context.Background(), w.workspaceID())
+}
+
 // -- Lifecycle --
 
 func (w *ClientWorkspace) Subscribe(program *tea.Program) {

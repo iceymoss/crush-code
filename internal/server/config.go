@@ -259,6 +259,42 @@ func (c *controllerV1) handleGetWorkspaceProjectInitPrompt(w http.ResponseWriter
 	jsonEncode(w, proto.ProjectInitPromptResponse{Prompt: prompt})
 }
 
+// handlePostWorkspaceMCPEnableDocker enables the Docker MCP server.
+//
+//	@Summary		Enable Docker MCP
+//	@Tags			mcp
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/docker/enable [post]
+func (c *controllerV1) handlePostWorkspaceMCPEnableDocker(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := c.backend.EnableDockerMCP(r.Context(), id); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handlePostWorkspaceMCPDisableDocker disables the Docker MCP server.
+//
+//	@Summary		Disable Docker MCP
+//	@Tags			mcp
+//	@Param			id	path	string	true	"Workspace ID"
+//	@Success		200
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/mcp/docker/disable [post]
+func (c *controllerV1) handlePostWorkspaceMCPDisableDocker(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := c.backend.DisableDockerMCP(id); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handlePostWorkspaceMCPRefreshTools refreshes tools for a named MCP server.
 //
 //	@Summary		Refresh MCP tools
