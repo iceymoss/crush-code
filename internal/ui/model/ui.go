@@ -2311,11 +2311,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 					},
 				)
 			}
-			binds = append(binds,
-				[]key.Binding{
-					help,
-				},
-			)
 		}
 	}
 
