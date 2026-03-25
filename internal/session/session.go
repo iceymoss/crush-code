@@ -15,30 +15,37 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
+// TodoStatus 定义了任务的状态
 type TodoStatus string
 
 const (
-	TodoStatusPending    TodoStatus = "pending"
+	// TodoStatusPending 定义了任务的待处理状态
+	TodoStatusPending TodoStatus = "pending"
+	// TodoStatusInProgress 定义了任务的进行中状态
 	TodoStatusInProgress TodoStatus = "in_progress"
-	TodoStatusCompleted  TodoStatus = "completed"
+	// TodoStatusCompleted 定义了任务的完成状态
+	TodoStatusCompleted TodoStatus = "completed"
 )
 
-// HashID returns the XXH3 hash of a session ID (UUID) as a hex string.
+// HashID 返回会话ID的XXH3哈希值，作为十六进制字符串
 func HashID(id string) string {
 	h := xxh3.New()
 	h.WriteString(id)
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// Todo 定义了任务的结构
 type Todo struct {
-	Content    string     `json:"content"`
-	Status     TodoStatus `json:"status"`
-	ActiveForm string     `json:"active_form"`
+	Content    string     `json:"content"`     // 任务内容
+	Status     TodoStatus `json:"status"`      // 任务状态
+	ActiveForm string     `json:"active_form"` // 任务的活跃表单
 }
 
-// HasIncompleteTodos returns true if there are any non-completed todos.
+// HasIncompleteTodos 是否存在未完成的任务
 func HasIncompleteTodos(todos []Todo) bool {
+	// 遍历任务列表，如果存在未完成的任务，则返回true
 	for _, todo := range todos {
+		// 如果任务状态不为完成，则返回true
 		if todo.Status != TodoStatusCompleted {
 			return true
 		}
@@ -46,45 +53,49 @@ func HasIncompleteTodos(todos []Todo) bool {
 	return false
 }
 
+// Session 定义了会话的结构
 type Session struct {
-	ID               string
-	ParentSessionID  string
-	Title            string
-	MessageCount     int64
-	PromptTokens     int64
-	CompletionTokens int64
-	SummaryMessageID string
-	Cost             float64
-	Todos            []Todo
-	CreatedAt        int64
-	UpdatedAt        int64
+	ID               string  // 会话id
+	ParentSessionID  string  // 父会话id
+	Title            string  // 会话标题
+	MessageCount     int64   // 消息数量
+	PromptTokens     int64   // 提示token数量
+	CompletionTokens int64   // 完成token数量
+	SummaryMessageID string  // 摘要消息id
+	Cost             float64 // 会话费用
+	Todos            []Todo  // 待办事项列表
+	CreatedAt        int64   // 创建时间戳
+	UpdatedAt        int64   // 更新时间戳
 }
 
+// Service 定义了会话服务的接口
 type Service interface {
-	pubsub.Subscriber[Session]
-	Create(ctx context.Context, title string) (Session, error)
-	CreateTitleSession(ctx context.Context, parentSessionID string) (Session, error)
-	CreateTaskSession(ctx context.Context, toolCallID, parentSessionID, title string) (Session, error)
-	Get(ctx context.Context, id string) (Session, error)
-	GetLast(ctx context.Context) (Session, error)
-	List(ctx context.Context) ([]Session, error)
-	Save(ctx context.Context, session Session) (Session, error)
-	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
-	Rename(ctx context.Context, id string, title string) error
-	Delete(ctx context.Context, id string) error
+	pubsub.Subscriber[Session]                                                                                                  // 对于Session类型的订阅者，实现了pubsub.Subscriber[Session]接口
+	Create(ctx context.Context, title string) (Session, error)                                                                  // 创建会话
+	CreateTitleSession(ctx context.Context, parentSessionID string) (Session, error)                                            // 创建标题会话
+	CreateTaskSession(ctx context.Context, toolCallID, parentSessionID, title string) (Session, error)                          // 创建任务会话
+	Get(ctx context.Context, id string) (Session, error)                                                                        // 获取会话
+	GetLast(ctx context.Context) (Session, error)                                                                               // 获取最后一个会话
+	List(ctx context.Context) ([]Session, error)                                                                                // 获取会话列表
+	Save(ctx context.Context, session Session) (Session, error)                                                                 // 保存会话
+	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error // 更新标题和使用情况
+	Rename(ctx context.Context, id string, title string) error                                                                  // 重命名会话
+	Delete(ctx context.Context, id string) error                                                                                // 删除会话
 
-	// Agent tool session management
-	CreateAgentToolSessionID(messageID, toolCallID string) string
-	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
-	IsAgentToolSession(sessionID string) bool
+	// agent工具会话管理
+	CreateAgentToolSessionID(messageID, toolCallID string) string                            // 创建agent工具会话id
+	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool) // 解析agent工具会话id
+	IsAgentToolSession(sessionID string) bool                                                // 是否是agent工具会话
 }
 
+// service 定义了会话服务的实现
 type service struct {
 	*pubsub.Broker[Session]
-	db *sql.DB
-	q  *db.Queries
+	db *sql.DB     // 数据库连接
+	q  *db.Queries // 数据库查询器，用于执行数据库操作
 }
 
+// Create 创建会话
 func (s *service) Create(ctx context.Context, title string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
 		ID:    uuid.New().String(),

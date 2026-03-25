@@ -51,27 +51,27 @@ type UpdateAvailableMsg struct {
 }
 
 type App struct {
-	Sessions    session.Service
-	Messages    message.Service
-	History     history.Service
-	Permissions permission.Service
-	FileTracker filetracker.Service
+	Sessions    session.Service     // 会话服务，管理会话的创建、获取、删除等操作
+	Messages    message.Service     // 消息服务，管理agent的各种消息的创建、获取、删除等操作
+	History     history.Service     // 历史服务，管理用户的历史会话记录的创建、获取、删除等操作
+	Permissions permission.Service  // 权限服务，用于管理agent各种权限能力
+	FileTracker filetracker.Service // 文件跟踪服务，管理文件的创建、获取、删除等操作
 
-	AgentCoordinator agent.Coordinator
+	AgentCoordinator agent.Coordinator // agent协调器，用于协调agent的各种操作
 
-	LSPManager *lsp.Manager
+	LSPManager *lsp.Manager // LSP管理器，用于管理LSP的各种操作, SLP是Language Server Protocol的缩写，是一种用于代码编辑器的协议
 
-	config *config.ConfigStore
+	config *config.ConfigStore // 配置存储，用于存储配置信息
 
-	serviceEventsWG *sync.WaitGroup
-	eventsCtx       context.Context
-	events          chan tea.Msg
-	tuiWG           *sync.WaitGroup
+	serviceEventsWG *sync.WaitGroup // 服务事件等待组，用于等待服务事件的完成
+	eventsCtx       context.Context // 事件上下文，用于存储事件信息
+	events          chan tea.Msg    // 事件通道，用于传递事件信息
+	tuiWG           *sync.WaitGroup // TUI等待组，用于等待TUI的完成
 
 	// global context and cleanup functions
-	globalCtx          context.Context
-	cleanupFuncs       []func(context.Context) error
-	agentNotifications *pubsub.Broker[notify.Notification]
+	globalCtx          context.Context                     // 全局上下文，用于存储全局信息
+	cleanupFuncs       []func(context.Context) error       // 清理函数，用于清理资源
+	agentNotifications *pubsub.Broker[notify.Notification] // agent通知，用于通知agent的各种操作
 }
 
 // New initializes a new application instance.
