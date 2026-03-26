@@ -76,14 +76,16 @@ func Alias(userID string) {
 	slog.Info("Aliased in PostHog", "machine_id", distinctId, "user_id", userID)
 }
 
-// send logs an event to PostHog with the given event name and properties.
+// send 发送事件到PostHog，给定事件名称和属性
 func send(event string, props ...any) {
+	// 如果客户端为空，则返回
 	if client == nil {
 		return
 	}
+	// 发送事件到PostHog
 	err := client.Enqueue(posthog.Capture{
-		DistinctId: distinctId,
-		Event:      event,
+		DistinctId: distinctId, // 设置唯一标识符
+		Event:      event,      // 设置事件名称
 		Properties: pairsToProps(props...).Merge(baseProps),
 	})
 	if err != nil {
@@ -109,10 +111,13 @@ func Error(errToLog any, props ...any) {
 	}
 }
 
+// Flush 刷新事件
 func Flush() {
+	// 如果客户端为空，则返回
 	if client == nil {
 		return
 	}
+	// 关闭客户端
 	if err := client.Close(); err != nil {
 		slog.Error("Failed to flush PostHog events", "error", err)
 	}

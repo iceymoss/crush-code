@@ -78,7 +78,9 @@ DELETE FROM messages
 WHERE session_id = ?
 `
 
+// DeleteSessionMessages 删除会话的所有消息
 func (q *Queries) DeleteSessionMessages(ctx context.Context, sessionID string) error {
+	// 执行删除会话所有消息语句
 	_, err := q.exec(ctx, q.deleteSessionMessagesStmt, deleteSessionMessages, sessionID)
 	return err
 }

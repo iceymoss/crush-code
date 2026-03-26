@@ -8,7 +8,7 @@ import (
 // bufferSize 定义了缓冲区大小
 const bufferSize = 64
 
-// Broker 定义了发布者/订阅者模式中的发布者
+// Broker 定义了发布者/订阅者模式中的发布者，他实现了Subscriber[T any]和Publisher[T any]接口接口
 // T 是泛型，表示事件的类型
 // subs 是订阅者列表，用于存储订阅者
 // mu 是互斥锁，用于保护subs

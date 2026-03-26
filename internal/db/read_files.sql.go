@@ -68,9 +68,10 @@ INSERT INTO read_files (
     read_at = excluded.read_at
 `
 
+// RecordFileReadParams 记录文件读取参数
 type RecordFileReadParams struct {
-	SessionID string `json:"session_id"`
-	Path      string `json:"path"`
+	SessionID string `json:"session_id"` // 会话id
+	Path      string `json:"path"`       // 文件路径
 }
 
 func (q *Queries) RecordFileRead(ctx context.Context, arg RecordFileReadParams) error {

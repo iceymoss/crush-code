@@ -8,45 +8,49 @@ import (
 	"database/sql"
 )
 
+// File 定义了文件的模型
 type File struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Version   int64  `json:"version"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`         // 文件id
+	SessionID string `json:"session_id"` // 会话id
+	Path      string `json:"path"`       // 文件路径
+	Content   string `json:"content"`    // 文件内容
+	Version   int64  `json:"version"`    // 文件版本
+	CreatedAt int64  `json:"created_at"` // 创建时间戳
+	UpdatedAt int64  `json:"updated_at"` // 更新时间戳
 }
 
+// Message 定义了消息的模型
 type Message struct {
-	ID               string         `json:"id"`
-	SessionID        string         `json:"session_id"`
-	Role             string         `json:"role"`
-	Parts            string         `json:"parts"`
-	Model            sql.NullString `json:"model"`
-	CreatedAt        int64          `json:"created_at"`
-	UpdatedAt        int64          `json:"updated_at"`
-	FinishedAt       sql.NullInt64  `json:"finished_at"`
-	Provider         sql.NullString `json:"provider"`
-	IsSummaryMessage int64          `json:"is_summary_message"`
+	ID               string         `json:"id"`                 // 消息id
+	SessionID        string         `json:"session_id"`         // 会话id
+	Role             string         `json:"role"`               // 消息角色
+	Parts            string         `json:"parts"`              // 消息内容
+	Model            sql.NullString `json:"model"`              // 模型
+	CreatedAt        int64          `json:"created_at"`         // 创建时间戳
+	UpdatedAt        int64          `json:"updated_at"`         // 更新时间戳
+	FinishedAt       sql.NullInt64  `json:"finished_at"`        // 完成时间戳
+	Provider         sql.NullString `json:"provider"`           // 模型提供商
+	IsSummaryMessage int64          `json:"is_summary_message"` // 是否是摘要消息
 }
 
+// ReadFile 定义了读取文件的模型
 type ReadFile struct {
-	SessionID string `json:"session_id"`
-	Path      string `json:"path"`
-	ReadAt    int64  `json:"read_at"`
+	SessionID string `json:"session_id"` // 会话id
+	Path      string `json:"path"`       // 文件路径
+	ReadAt    int64  `json:"read_at"`    // 读取时间戳
 }
 
+// Session 定义了会话的模型
 type Session struct {
-	ID               string         `json:"id"`
-	ParentSessionID  sql.NullString `json:"parent_session_id"`
-	Title            string         `json:"title"`
-	MessageCount     int64          `json:"message_count"`
-	PromptTokens     int64          `json:"prompt_tokens"`
-	CompletionTokens int64          `json:"completion_tokens"`
-	Cost             float64        `json:"cost"`
-	UpdatedAt        int64          `json:"updated_at"`
-	CreatedAt        int64          `json:"created_at"`
-	SummaryMessageID sql.NullString `json:"summary_message_id"`
-	Todos            sql.NullString `json:"todos"`
+	ID               string         `json:"id"`                 // 会话id
+	ParentSessionID  sql.NullString `json:"parent_session_id"`  // 父会话id
+	Title            string         `json:"title"`              // 会话标题
+	MessageCount     int64          `json:"message_count"`      // 消息数量
+	PromptTokens     int64          `json:"prompt_tokens"`      // 提示token数量
+	CompletionTokens int64          `json:"completion_tokens"`  // 完成token数量
+	Cost             float64        `json:"cost"`               // 会话费用
+	UpdatedAt        int64          `json:"updated_at"`         // 更新时间戳
+	CreatedAt        int64          `json:"created_at"`         // 创建时间戳
+	SummaryMessageID sql.NullString `json:"summary_message_id"` // 摘要消息id
+	Todos            sql.NullString `json:"todos"`              // 待办事项列表
 }

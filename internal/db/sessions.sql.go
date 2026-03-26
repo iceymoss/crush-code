@@ -36,17 +36,20 @@ INSERT INTO sessions (
 ) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos
 `
 
+// CreateSessionParams 创建会话参数
 type CreateSessionParams struct {
-	ID               string         `json:"id"`
-	ParentSessionID  sql.NullString `json:"parent_session_id"`
-	Title            string         `json:"title"`
-	MessageCount     int64          `json:"message_count"`
-	PromptTokens     int64          `json:"prompt_tokens"`
-	CompletionTokens int64          `json:"completion_tokens"`
-	Cost             float64        `json:"cost"`
+	ID               string         `json:"id"`                // 会话id
+	ParentSessionID  sql.NullString `json:"parent_session_id"` // 父会话id
+	Title            string         `json:"title"`             // 会话标题
+	MessageCount     int64          `json:"message_count"`     // 消息数量
+	PromptTokens     int64          `json:"prompt_tokens"`     // 提示token数量
+	CompletionTokens int64          `json:"completion_tokens"` // 完成token数量
+	Cost             float64        `json:"cost"`              // 会话费用
 }
 
+// CreateSession 创建会话
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
+	// 执行创建会话语句
 	row := q.queryRow(ctx, q.createSessionStmt, createSession,
 		arg.ID,
 		arg.ParentSessionID,
@@ -56,6 +59,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.CompletionTokens,
 		arg.Cost,
 	)
+
+	// 扫描创建会话结果
 	var i Session
 	err := row.Scan(
 		&i.ID,
