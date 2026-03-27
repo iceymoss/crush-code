@@ -21,77 +21,79 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/transport"
 )
 
-// DiagnosticCounts holds the count of diagnostics by severity.
+// DiagnosticCounts 持有诊断数量按严重性分类
 type DiagnosticCounts struct {
-	Error       int
-	Warning     int
-	Information int
-	Hint        int
+	Error       int // 错误数量
+	Warning     int // 警告数量
+	Information int // 信息数量
+	Hint        int // 提示数量
 }
 
+// Client 表示一个LSP客户端
 type Client struct {
-	client *powernap.Client
-	name   string
-	debug  bool
+	client *powernap.Client // 底层LSP客户端
+	name   string           // 客户端名称
+	debug  bool             // 调试模式
 
-	// Working directory this LSP is scoped to.
-	cwd string
+	// Working directory this LSP is scoped to. 这个LSP客户端的作用域工作目录
+	cwd string // 工作目录
 
 	// File types this LSP server handles (e.g., .go, .rs, .py)
-	fileTypes []string
+	fileTypes []string // 文件类型
 
 	// Configuration for this LSP client
-	config config.LSPConfig
+	config config.LSPConfig // 配置
 
-	// Original context and resolver for recreating the client
-	ctx      context.Context
-	resolver config.VariableResolver
+	// Original context and resolver for recreating the client 原始上下文和解析器用于重新创建客户端
+	ctx      context.Context         // 原始上下文
+	resolver config.VariableResolver // 解析器
 
-	// Diagnostic change callback
-	onDiagnosticsChanged func(name string, count int)
+	// Diagnostic change callback 诊断变化回调
+	onDiagnosticsChanged func(name string, count int) // 诊断变化回调
 
 	// Diagnostic cache
-	diagnostics *csync.VersionedMap[protocol.DocumentURI, []protocol.Diagnostic]
+	diagnostics *csync.VersionedMap[protocol.DocumentURI, []protocol.Diagnostic] // 诊断缓存
 
-	// Cached diagnostic counts to avoid map copy on every UI render.
-	diagCountsCache   DiagnosticCounts
-	diagCountsVersion uint64
-	diagCountsMu      sync.Mutex
+	// Cached diagnostic counts to avoid map copy on every UI render. 缓存诊断数量避免每次UI渲染时复制映射
+	diagCountsCache   DiagnosticCounts // 诊断缓存
+	diagCountsVersion uint64           // 诊断版本
+	diagCountsMu      sync.Mutex       // 诊断互斥锁
 
-	// Files are currently opened by the LSP
-	openFiles *csync.Map[string, *OpenFileInfo]
+	// Files are currently opened by the LSP 当前由LSP打开的文件
+	openFiles *csync.Map[string, *OpenFileInfo] // 打开文件缓存
 
-	// Server state
-	serverState atomic.Value
+	// Server state 服务器状态
+	serverState atomic.Value // 服务器状态
 }
 
 // New creates a new LSP client using the powernap implementation.
+// 创建一个新的LSP客户端使用powernap实现
 func New(
-	ctx context.Context,
+	ctx context.Context, // 原始上下文
 	name string,
-	cfg config.LSPConfig,
-	resolver config.VariableResolver,
-	cwd string,
-	debug bool,
+	cfg config.LSPConfig, // 配置
+	resolver config.VariableResolver, // 解析器
+	cwd string, // 工作目录
+	debug bool, // 调试模式
 ) (*Client, error) {
-	client := &Client{
-		name:        name,
-		fileTypes:   cfg.FileTypes,
-		diagnostics: csync.NewVersionedMap[protocol.DocumentURI, []protocol.Diagnostic](),
-		openFiles:   csync.NewMap[string, *OpenFileInfo](),
-		config:      cfg,
-		ctx:         ctx,
-		debug:       debug,
-		resolver:    resolver,
-		cwd:         cwd,
+	client := &Client{ // 创建一个新的LSP客户端
+		name:        name,                                                                 // 客户端名称
+		fileTypes:   cfg.FileTypes,                                                        // 文件类型
+		diagnostics: csync.NewVersionedMap[protocol.DocumentURI, []protocol.Diagnostic](), // 诊断缓存
+		openFiles:   csync.NewMap[string, *OpenFileInfo](),                                // 打开文件缓存
+		config:      cfg,                                                                  // 配置
+		ctx:         ctx,                                                                  // 原始上下文
+		debug:       debug,                                                                // 调试模式
+		resolver:    resolver,                                                             // 解析器
+		cwd:         cwd,                                                                  // 工作目录
 	}
-	client.serverState.Store(StateStopped)
+	client.serverState.Store(StateStopped) // 设置服务器状态为Stopped
 
 	if err := client.createPowernapClient(); err != nil {
 		return nil, err
 	}
 
-	return client, nil
+	return client, nil // 返回新的LSP客户端
 }
 
 // Initialize initializes the LSP client and returns the server capabilities.
