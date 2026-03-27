@@ -2611,13 +2611,14 @@ func (m *UI) openEditor(value string) tea.Cmd {
 	if err != nil {
 		return util.ReportError(err)
 	}
+	tmpPath := tmpfile.Name()
 	defer tmpfile.Close() //nolint:errcheck
 	if _, err := tmpfile.WriteString(value); err != nil {
 		return util.ReportError(err)
 	}
 	cmd, err := editor.Command(
 		"crush",
-		tmpfile.Name(),
+		tmpPath,
 		editor.AtPosition(
 			m.textarea.Line()+1,
 			m.textarea.Column()+1,
@@ -2627,17 +2628,20 @@ func (m *UI) openEditor(value string) tea.Cmd {
 		return util.ReportError(err)
 	}
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		defer func() {
+			_ = os.Remove(tmpPath)
+		}()
+
 		if err != nil {
 			return util.ReportError(err)
 		}
-		content, err := os.ReadFile(tmpfile.Name())
+		content, err := os.ReadFile(tmpPath)
 		if err != nil {
 			return util.ReportError(err)
 		}
 		if len(content) == 0 {
 			return util.ReportWarn("Message is empty")
 		}
-		os.Remove(tmpfile.Name())
 		return openEditorMsg{
 			Text: strings.TrimSpace(string(content)),
 		}
