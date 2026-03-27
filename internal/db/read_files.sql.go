@@ -74,7 +74,9 @@ type RecordFileReadParams struct {
 	Path      string `json:"path"`       // 文件路径
 }
 
+// RecordFileRead 记录文件的读取操作
 func (q *Queries) RecordFileRead(ctx context.Context, arg RecordFileReadParams) error {
+	// 记录文件的读取操作，如果记录失败，则返回错误
 	_, err := q.exec(ctx, q.recordFileReadStmt, recordFileRead, arg.SessionID, arg.Path)
 	return err
 }
