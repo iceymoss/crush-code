@@ -104,17 +104,24 @@ func (s *service) Create(ctx context.Context, title string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+
+	// 将数据库会话数据结构转为会话对象
 	session := s.fromDBItem(dbSession)
+
+	// 发布一个“创建会话”事件
 	s.Publish(pubsub.CreatedEvent, session)
+
+	// 用于开发者对用户使用的埋点
 	event.SessionCreated()
 	return session, nil
 }
 
+// CreateTaskSession 创建任务会话
 func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessionID, title string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
-		ID:              toolCallID,
-		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
-		Title:           title,
+		ID:              toolCallID,                                           // 任务会话id,使用工具调用id
+		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true}, // 父会话id
+		Title:           title,                                                // 任务会话标题
 	})
 	if err != nil {
 		return Session{}, err
@@ -124,11 +131,12 @@ func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessi
 	return session, nil
 }
 
+// CreateTitleSession 创建标题会话
 func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
-		ID:              "title-" + parentSessionID,
-		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
-		Title:           "Generate a title",
+		ID:              "title-" + parentSessionID,                           // 标题会话id,使用父会话id
+		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true}, // 父会话id
+		Title:           "Generate a title",                                   // 标题会话标题
 	})
 	if err != nil {
 		return Session{}, err
@@ -138,7 +146,9 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 	return session, nil
 }
 
+// Delete 删除会话
 func (s *service) Delete(ctx context.Context, id string) error {
+	// 开始事务
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -147,29 +157,42 @@ func (s *service) Delete(ctx context.Context, id string) error {
 
 	qtx := s.q.WithTx(tx)
 
+	// 获取会话
 	dbSession, err := qtx.GetSessionByID(ctx, id)
 	if err != nil {
 		return err
 	}
+
+	// 删除会话消息
 	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session messages: %w", err)
 	}
+
+	// 删除会话文件
 	if err = qtx.DeleteSessionFiles(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session files: %w", err)
 	}
+
+	// 删除会话
 	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session: %w", err)
 	}
+
+	// 提交事务
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 
+	// 将数据库会话数据结构转为会话对象
 	session := s.fromDBItem(dbSession)
+
+	// 发布一个“删除会话”事件
 	s.Publish(pubsub.DeletedEvent, session)
 	event.SessionDeleted()
 	return nil
 }
 
+// Get 获取会话
 func (s *service) Get(ctx context.Context, id string) (Session, error) {
 	dbSession, err := s.q.GetSessionByID(ctx, id)
 	if err != nil {
@@ -178,6 +201,7 @@ func (s *service) Get(ctx context.Context, id string) (Session, error) {
 	return s.fromDBItem(dbSession), nil
 }
 
+// GetLast 获取最后一个会话
 func (s *service) GetLast(ctx context.Context) (Session, error) {
 	dbSession, err := s.q.GetLastSession(ctx)
 	if err != nil {
@@ -186,12 +210,15 @@ func (s *service) GetLast(ctx context.Context) (Session, error) {
 	return s.fromDBItem(dbSession), nil
 }
 
+// Save 保存会话
 func (s *service) Save(ctx context.Context, session Session) (Session, error) {
+	// 将任务列表序列化为JSON字符串
 	todosJSON, err := marshalTodos(session.Todos)
 	if err != nil {
 		return Session{}, err
 	}
 
+	// 更新会话
 	dbSession, err := s.q.UpdateSession(ctx, db.UpdateSessionParams{
 		ID:               session.ID,
 		Title:            session.Title,
@@ -215,20 +242,18 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 	return session, nil
 }
 
-// UpdateTitleAndUsage updates only the title and usage fields atomically.
-// This is safer than fetching, modifying, and saving the entire session.
+// UpdateTitleAndUsage 更新标题和使用情况，只更新标题和使用情况，不更新其他字段
 func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error {
 	return s.q.UpdateSessionTitleAndUsage(ctx, db.UpdateSessionTitleAndUsageParams{
-		ID:               sessionID,
-		Title:            title,
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		Cost:             cost,
+		ID:               sessionID,        // 会话id
+		Title:            title,            // 会话标题
+		PromptTokens:     promptTokens,     // 提示token数量
+		CompletionTokens: completionTokens, // 完成token数量
+		Cost:             cost,             // 会话费用
 	})
 }
 
-// Rename updates only the title of a session without touching updated_at or
-// usage fields.
+// Rename 重命名会话，只更新标题，不更新其他字段
 func (s *service) Rename(ctx context.Context, id string, title string) error {
 	return s.q.RenameSession(ctx, db.RenameSessionParams{
 		ID:    id,
@@ -236,6 +261,7 @@ func (s *service) Rename(ctx context.Context, id string, title string) error {
 	})
 }
 
+// List 获取会话列表
 func (s *service) List(ctx context.Context) ([]Session, error) {
 	dbSessions, err := s.q.ListSessions(ctx)
 	if err != nil {
@@ -248,6 +274,7 @@ func (s *service) List(ctx context.Context) ([]Session, error) {
 	return sessions, nil
 }
 
+// fromDBItem 将数据库会话数据结构转为会话对象
 func (s service) fromDBItem(item db.Session) Session {
 	todos, err := unmarshalTodos(item.Todos.String)
 	if err != nil {
@@ -268,6 +295,7 @@ func (s service) fromDBItem(item db.Session) Session {
 	}
 }
 
+// marshalTodos 将任务列表序列化为JSON字符串
 func marshalTodos(todos []Todo) (string, error) {
 	if len(todos) == 0 {
 		return "", nil
@@ -279,6 +307,7 @@ func marshalTodos(todos []Todo) (string, error) {
 	return string(data), nil
 }
 
+// unmarshalTodos 将JSON字符串反序列化为任务列表
 func unmarshalTodos(data string) ([]Todo, error) {
 	if data == "" {
 		return []Todo{}, nil
@@ -290,6 +319,7 @@ func unmarshalTodos(data string) ([]Todo, error) {
 	return todos, nil
 }
 
+// NewService 创建会话服务
 func NewService(q *db.Queries, conn *sql.DB) Service {
 	broker := pubsub.NewBroker[Session]()
 	return &service{
@@ -299,12 +329,12 @@ func NewService(q *db.Queries, conn *sql.DB) Service {
 	}
 }
 
-// CreateAgentToolSessionID creates a session ID for agent tool sessions using the format "messageID$$toolCallID"
+// CreateAgentToolSessionID 创建agent工具会话id，使用格式 "messageID$$toolCallID"
 func (s *service) CreateAgentToolSessionID(messageID, toolCallID string) string {
 	return fmt.Sprintf("%s$$%s", messageID, toolCallID)
 }
 
-// ParseAgentToolSessionID parses an agent tool session ID into its components
+// ParseAgentToolSessionID 解析agent工具会话id，将其拆分为消息id和工具调用id
 func (s *service) ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool) {
 	parts := strings.Split(sessionID, "$$")
 	if len(parts) != 2 {
@@ -313,7 +343,7 @@ func (s *service) ParseAgentToolSessionID(sessionID string) (messageID string, t
 	return parts[0], parts[1], true
 }
 
-// IsAgentToolSession checks if a session ID follows the agent tool session format
+// IsAgentToolSession 检查会话id是否符合agent工具会话格式
 func (s *service) IsAgentToolSession(sessionID string) bool {
 	_, _, ok := s.ParseAgentToolSessionID(sessionID)
 	return ok
