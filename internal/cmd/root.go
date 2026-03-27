@@ -303,6 +303,7 @@ func shouldEnableMetrics(cfg *config.Config) bool {
 	return true
 }
 
+// MaybePrependStdin 如果stdin是终端，则返回prompt，否则读取stdin的内容并返回
 func MaybePrependStdin(prompt string) (string, error) {
 	if term.IsTerminal(os.Stdin.Fd()) {
 		return prompt, nil

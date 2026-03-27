@@ -74,7 +74,7 @@ type App struct {
 	agentNotifications *pubsub.Broker[notify.Notification] // agent通知，用于通知agent的各种操作
 }
 
-// New initializes a new application instance.
+// New initializes 初始化一个新应用程序实例。
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)

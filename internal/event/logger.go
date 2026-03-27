@@ -7,8 +7,10 @@ import (
 	"github.com/posthog/posthog-go"
 )
 
+// _ posthog.Logger = logger{} 是断言，确保 logger 实现了 posthog.Logger 接口
 var _ posthog.Logger = logger{}
 
+// logger 实现了 posthog.Logger 接口
 type logger struct{}
 
 func (logger) Debugf(format string, args ...any) {

@@ -72,27 +72,34 @@ crush run --continue "Follow up on your last response"
 			sessionID = sess.ID
 		}
 
+		// 如果配置未完成，则返回错误
 		if !app.Config().IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'crush' to set up a provider interactively")
 		}
 
+		// 如果verbose为true，则设置默认的slog
 		if verbose {
 			slog.SetDefault(slog.New(log.New(os.Stderr)))
 		}
 
+		// 将args拼接成prompt
 		prompt := strings.Join(args, " ")
 
+		// 如果prompt为空，则返回错误
 		prompt, err = MaybePrependStdin(prompt)
 		if err != nil {
 			slog.Error("Failed to read from stdin", "error", err)
 			return err
 		}
 
+		// 如果prompt为空，则返回错误
 		if prompt == "" {
 			return fmt.Errorf("no prompt provided")
 		}
 
+		// 设置非交互模式
 		event.SetNonInteractive(true)
+		// 初始化应用
 		event.AppInitialized()
 
 		switch {
