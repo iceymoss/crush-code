@@ -730,6 +730,84 @@ func TestConfig_configureProvidersCustomProviderValidation(t *testing.T) {
 	})
 }
 
+func TestConfig_configureProvidersKnownProviderTypeCompatibility(t *testing.T) {
+	knownProviders := []catwalk.Provider{
+		{
+			ID:          "deepseek",
+			APIKey:      "$DEEPSEEK_API_KEY",
+			APIEndpoint: "https://api.deepseek.com/v1",
+			Type:        catwalk.Type("openai-compat"),
+			Models: []catwalk.Model{{
+				ID: "deepseek-reasoner",
+			}},
+		},
+		{
+			ID:          "gemini",
+			APIKey:      "$GEMINI_API_KEY",
+			APIEndpoint: "https://generativelanguage.googleapis.com",
+			Type:        catwalk.Type("google"),
+			Models: []catwalk.Model{{
+				ID: "gemini-2.5-pro",
+			}},
+		},
+	}
+
+	cfg := &Config{}
+	cfg.setDefaults("/tmp", "")
+	env := env.NewFromMap(map[string]string{
+		"DEEPSEEK_API_KEY": "test-deepseek-key",
+		"GEMINI_API_KEY":   "test-gemini-key",
+	})
+	resolver := NewEnvironmentVariableResolver(env)
+	err := cfg.configureProviders(env, resolver, knownProviders)
+	require.NoError(t, err)
+
+	deepseek, ok := cfg.Providers.Get("deepseek")
+	require.True(t, ok, "DeepSeek provider should be present")
+	require.Equal(t, catwalk.TypeOpenAI, deepseek.Type)
+
+	gemini, ok := cfg.Providers.Get("gemini")
+	require.True(t, ok, "Gemini provider should be present")
+	require.Equal(t, catwalk.TypeGemini, gemini.Type)
+}
+
+func TestConfig_configureProvidersCustomProviderTypeCompatibility(t *testing.T) {
+	cfg := &Config{
+		Providers: csync.NewMapFrom(map[string]ProviderConfig{
+			"custom-openai-compat": {
+				APIKey:  "test-key",
+				BaseURL: "https://api.custom.com/v1",
+				Type:    catwalk.Type("openai-compat"),
+				Models: []catwalk.Model{{
+					ID: "test-model",
+				}},
+			},
+			"custom-google-vertex": {
+				APIKey:  "test-key",
+				BaseURL: "https://vertex.googleapis.com",
+				Type:    catwalk.Type("google-vertex"),
+				Models: []catwalk.Model{{
+					ID: "gemini-pro",
+				}},
+			},
+		}),
+	}
+	cfg.setDefaults("/tmp", "")
+
+	env := env.NewFromMap(map[string]string{})
+	resolver := NewEnvironmentVariableResolver(env)
+	err := cfg.configureProviders(env, resolver, []catwalk.Provider{})
+	require.NoError(t, err)
+
+	customOpenAICompat, ok := cfg.Providers.Get("custom-openai-compat")
+	require.True(t, ok)
+	require.Equal(t, catwalk.TypeOpenAI, customOpenAICompat.Type)
+
+	customGoogleVertex, ok := cfg.Providers.Get("custom-google-vertex")
+	require.True(t, ok)
+	require.Equal(t, catwalk.TypeVertexAI, customGoogleVertex.Type)
+}
+
 func TestConfig_configureProvidersEnhancedCredentialValidation(t *testing.T) {
 	t.Run("VertexAI provider removed when credentials missing with existing config", func(t *testing.T) {
 		knownProviders := []catwalk.Provider{

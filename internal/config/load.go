@@ -135,6 +135,11 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 	defer restore()
 	for _, p := range knownProviders {
 		knownProviderNames[string(p.ID)] = true
+		normalizedType, supported := normalizeProviderType(resolveKnownProviderType(p))
+		if !supported {
+			slog.Warn("Skipping known provider because the provider type is not supported", "provider", p.ID, "type", p.Type)
+			continue
+		}
 		config, configExists := c.Providers.Get(string(p.ID))
 		// if the user configured a known provider we need to allow it to override a couple of parameters
 		if configExists {
@@ -185,7 +190,7 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 			Name:               p.Name,
 			BaseURL:            p.APIEndpoint,
 			APIKey:             p.APIKey,
-			Type:               p.Type,
+			Type:               normalizedType,
 			Disable:            config.Disable,
 			SystemPromptPrefix: config.SystemPromptPrefix,
 			ExtraHeaders:       headers,
@@ -263,6 +268,13 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 		if providerConfig.Type == "" {
 			providerConfig.Type = catwalk.TypeOpenAI
 		}
+		normalizedType, supported := normalizeProviderType(providerConfig.Type)
+		if !supported {
+			slog.Warn("Skipping custom provider because the provider type is not supported", "provider", id, "type", providerConfig.Type)
+			c.Providers.Del(id)
+			continue
+		}
+		providerConfig.Type = normalizedType
 
 		if providerConfig.Disable {
 			slog.Debug("Skipping custom provider due to disable flag", "provider", id)
@@ -282,12 +294,6 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 			c.Providers.Del(id)
 			continue
 		}
-		if providerConfig.Type != catwalk.TypeOpenAI && providerConfig.Type != catwalk.TypeAnthropic && providerConfig.Type != catwalk.TypeGemini {
-			slog.Warn("Skipping custom provider because the provider type is not supported", "provider", id, "type", providerConfig.Type)
-			c.Providers.Del(id)
-			continue
-		}
-
 		apiKey, err := resolver.ResolveValue(providerConfig.APIKey)
 		if apiKey == "" || err != nil {
 			slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
@@ -302,6 +308,52 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 		c.Providers.Set(id, providerConfig)
 	}
 	return nil
+}
+
+// normalizeProviderType maps provider aliases from upstream metadata to
+// provider types supported by the runtime.
+func normalizeProviderType(tp catwalk.Type) (catwalk.Type, bool) {
+	switch tp {
+	case catwalk.TypeOpenAI,
+		catwalk.TypeAnthropic,
+		catwalk.TypeGemini,
+		catwalk.TypeBedrock,
+		catwalk.TypeAzure,
+		catwalk.TypeVertexAI:
+		return tp, true
+	case catwalk.Type("openai-compat"),
+		catwalk.Type("openrouter"),
+		catwalk.Type("vercel"):
+		return catwalk.TypeOpenAI, true
+	case catwalk.Type("google"):
+		return catwalk.TypeGemini, true
+	case catwalk.Type("google-vertex"):
+		return catwalk.TypeVertexAI, true
+	default:
+		return tp, false
+	}
+}
+
+func resolveKnownProviderType(p catwalk.Provider) catwalk.Type {
+	if p.Type != "" {
+		return p.Type
+	}
+	switch p.ID {
+	case catwalk.InferenceProviderBedrock:
+		return catwalk.TypeBedrock
+	case catwalk.InferenceProviderAzure:
+		return catwalk.TypeAzure
+	case catwalk.InferenceProviderVertexAI:
+		return catwalk.TypeVertexAI
+	case catwalk.InferenceProviderAnthropic:
+		return catwalk.TypeAnthropic
+	case catwalk.InferenceProviderOpenAI:
+		return catwalk.TypeOpenAI
+	case catwalk.InferenceProviderGemini:
+		return catwalk.TypeGemini
+	default:
+		return catwalk.TypeOpenAI
+	}
 }
 
 func (c *Config) setDefaults(workingDir, dataDir string) {
