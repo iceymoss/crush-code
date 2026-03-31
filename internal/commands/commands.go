@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
@@ -221,8 +222,12 @@ func isMarkdownFile(name string) bool {
 }
 
 func GetMCPPrompt(cfg *config.ConfigStore, clientID, promptID string, args map[string]string) (string, error) {
-	// TODO: we should pass the context down
-	result, err := mcp.GetPromptMessages(context.Background(), cfg, clientID, promptID, args)
+	// Create a context with timeout since tea.Cmd doesn't support context passing.
+	// The MCP client has its own timeout, but this provides an additional safeguard.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := mcp.GetPromptMessages(ctx, cfg, clientID, promptID, args)
 	if err != nil {
 		return "", err
 	}
