@@ -19,6 +19,6 @@ func listen(network, address string) (net.Listener, error) {
 		}
 		return winio.ListenPipe(address, cfg)
 	default:
-		return net.Listen(network, address)
+		return net.Listen(network, address) //nolint:noctx
 	}
 }
