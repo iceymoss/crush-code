@@ -87,6 +87,7 @@ func (c *Client) DeleteWorkspace(ctx context.Context, id string) error {
 // SubscribeEvents subscribes to server-sent events for a workspace.
 func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, error) {
 	events := make(chan any, 100)
+	//nolint:bodyclose
 	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/events", id), nil, http.Header{
 		"Accept":        []string{"text/event-stream"},
 		"Cache-Control": []string{"no-cache"},
