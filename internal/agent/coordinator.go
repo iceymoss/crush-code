@@ -73,20 +73,21 @@ type Coordinator interface {
 	UpdateModels(ctx context.Context) error
 }
 
+// coordinator 协调器，用于协调agent的各种操作
 type coordinator struct {
-	cfg         *config.ConfigStore
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	history     history.Service
-	filetracker filetracker.Service
-	lspManager  *lsp.Manager
-	notify      pubsub.Publisher[notify.Notification]
+	cfg         *config.ConfigStore                   // 配置存储，用于存储配置信息
+	sessions    session.Service                       // 会话服务，用于管理会话的创建、获取、删除等操作
+	messages    message.Service                       // 消息服务，用于管理消息的创建、获取、删除等操作
+	permissions permission.Service                    // 权限服务，用于管理权限的创建、获取、删除等操作
+	history     history.Service                       // 历史服务，用于管理历史记录的创建、获取、删除等操作
+	filetracker filetracker.Service                   // 文件跟踪服务，用于管理文件的创建、获取、删除等操作
+	lspManager  *lsp.Manager                          // LSP管理器，用于管理LSP的各种操作
+	notify      pubsub.Publisher[notify.Notification] // 通知事件，用于通知agent的各种操作
 
-	currentAgent SessionAgent
-	agents       map[string]SessionAgent
+	currentAgent SessionAgent            // 当前正在运行的agent
+	agents       map[string]SessionAgent // 所有已创建的agentm, name => agent
 
-	readyWg errgroup.Group
+	readyWg errgroup.Group // 准备等待组，用于等待所有agent准备完成
 }
 
 func NewCoordinator(
@@ -112,17 +113,22 @@ func NewCoordinator(
 		agents:      make(map[string]SessionAgent),
 	}
 
+	// 获取Coder Agent配置
 	agentCfg, ok := cfg.Config().Agents[config.AgentCoder]
 	if !ok {
 		return nil, errCoderAgentNotConfigured
 	}
 
 	// TODO: make this dynamic when we support multiple agents
+	// TODO：当我们需要支持多个 Agent 时，把这里改成动态加载
+
+	// 构建Coder Agent系统提示词
 	prompt, err := coderPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
 	if err != nil {
 		return nil, err
 	}
 
+	// 构建Coder Agent
 	agent, err := c.buildAgent(ctx, prompt, agentCfg, false)
 	if err != nil {
 		return nil, err

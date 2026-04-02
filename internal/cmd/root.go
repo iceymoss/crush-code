@@ -232,6 +232,7 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 	// ---------------------------------------------------------
 	// 兜底初始化
 	if cfg.Permissions == nil {
+		// 最小权限原则
 		cfg.Permissions = &config.Permissions{}
 	}
 

@@ -67,7 +67,7 @@ func (b *Broker[T]) Subscribe(ctx context.Context) <-chan Event[T] {
 	defer b.mu.Unlock()
 
 	select {
-	case <-b.done: // 如果已经关闭，则返回一个空的事件通道
+	case <-b.done: // 在调用订阅的时候，如果已经关闭，则返回一个空的事件通道
 		ch := make(chan Event[T]) // 创建一个空的事件通道
 		close(ch)                 // 关闭事件通道
 		return ch                 // 返回一个已经关闭的事件通道
@@ -128,8 +128,8 @@ func (b *Broker[T]) Publish(t EventType, payload T) {
 		select {
 		case sub <- event:
 		default:
-			// Channel is full, subscriber is slow - skip this event
-			// This prevents blocking the publisher
+			// Channel is full, subscriber is slow - skip this event, 如果订阅者通道满了，则丢弃事件，打印日志，然后继续下一次 for 循环
+			// This prevents blocking the publisher, 防止阻塞发布者
 		}
 	}
 }

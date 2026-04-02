@@ -10,10 +10,12 @@ import (
 	"github.com/charmbracelet/crush/internal/shell"
 )
 
+// VariableResolver 变量解析器接口
 type VariableResolver interface {
 	ResolveValue(value string) (string, error)
 }
 
+// Shell 命令执行器接口
 type Shell interface {
 	Exec(ctx context.Context, command string) (stdout, stderr string, err error)
 }

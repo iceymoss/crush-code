@@ -55,19 +55,30 @@ func (i Info) Available() bool {
 }
 
 // Check checks if a new version is available.
+// 检查更新，返回更新信息
+// ctx 上下文
+// current 当前版本
+// client 客户端
+// Info 更新信息
+// error 错误
 func Check(ctx context.Context, current string, client Client) (Info, error) {
+	// 创建更新信息
 	info := Info{
 		Current: current,
 		Latest:  current,
 	}
 
+	// 获取最新版本
 	release, err := client.Latest(ctx)
 	if err != nil {
 		return info, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
 
+	// 更新更新信息
 	info.Latest = strings.TrimPrefix(release.TagName, "v")
 	info.Current = strings.TrimPrefix(info.Current, "v")
+
+	// 更新信息的URL，用于下载更新
 	info.URL = release.HTMLURL
 	return info, nil
 }

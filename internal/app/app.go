@@ -76,43 +76,54 @@ type App struct {
 
 // New initializes 初始化一个新应用程序实例。
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
+	// 初始化数据库
 	q := db.New(conn)
+	// 初始化会话服务
 	sessions := session.NewService(q, conn)
+	// 初始化消息服务
 	messages := message.NewService(q)
+	// 初始化历史服务
 	files := history.NewService(q, conn)
+	// 获取配置
 	cfg := store.Config()
+	// 初始化权限服务
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
+
+	// 初始化允许的工具
 	var allowedTools []string
 	if cfg.Permissions != nil && cfg.Permissions.AllowedTools != nil {
 		allowedTools = cfg.Permissions.AllowedTools
 	}
 
+	// 初始化app
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
 		History:     files,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools),
-		FileTracker: filetracker.NewService(q),
-		LSPManager:  lsp.NewManager(store),
+		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools), // 初始化权限服务
+		FileTracker: filetracker.NewService(q),                                                                  // 初始化文件跟踪服务
+		LSPManager:  lsp.NewManager(store),                                                                      // 初始化LSP管理器
 
-		globalCtx: ctx,
+		globalCtx: ctx, // 全局上下文
 
-		config: store,
+		config: store, // 配置存储
 
-		events:             make(chan tea.Msg, 100),
-		serviceEventsWG:    &sync.WaitGroup{},
-		tuiWG:              &sync.WaitGroup{},
-		agentNotifications: pubsub.NewBroker[notify.Notification](),
+		events:             make(chan tea.Msg, 100),                 // 事件通道, 用于传递事件信息
+		serviceEventsWG:    &sync.WaitGroup{},                       // 服务事件等待组, 用于等待服务事件的完成
+		tuiWG:              &sync.WaitGroup{},                       // TUI并发同步, 用于等待TUI的完成
+		agentNotifications: pubsub.NewBroker[notify.Notification](), // 初始化agent通知, 用于通知agent的各种操作
 	}
 
 	app.setupEvents()
 
-	// Check for updates in the background.
+	// 检查更新，开启一个goroutine，用于检查更新
 	go app.checkForUpdates(ctx)
 
+	// 初始化MCP，开启一个goroutine，用于初始化MCP
 	go mcp.Initialize(ctx, app.Permissions, store)
 
 	// cleanup database upon app shutdown
+	// 将app自动更新检查和MCP客户端关闭的清理函数添加到清理函数列表中
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(context.Context) error { return conn.Close() },
@@ -120,23 +131,33 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	)
 
 	// TODO: remove the concept of agent config, most likely.
+	// TODO：极有可能会在未来移除 'agent config'（代理配置）这个概念。
+
+	// 查系统是否具备最起码的运行条件（至少配了一个能用的提供商
 	if !cfg.IsConfigured() {
 		slog.Warn("No agent configuration found")
 		return app, nil
 	}
+
+	// 初始化Coder Agent
 	if err := app.InitCoderAgent(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
 	}
 
 	// Set up callback for LSP state updates.
+	// 设置LSP状态更新回调
 	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
 		if client == nil {
+			// lsp客户端未启动，更新LSP状态为未启动状态
 			updateLSPState(name, lsp.StateUnstarted, nil, nil, 0)
 			return
 		}
+		// 设置诊断回调
 		client.SetDiagnosticsCallback(updateLSPDiagnostics)
+		// 更新LSP状态
 		updateLSPState(name, client.GetServerState(), nil, client, 0)
 	})
+	// 子协程跟踪配置的LSP服务器
 	go app.LSPManager.TrackConfigured()
 
 	return app, nil
@@ -456,65 +477,109 @@ func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 	}
 }
 
+// setupEvents 设置事件
 func (app *App) setupEvents() {
+	// 封装cxt和cancel函数，用于取消事件
 	ctx, cancel := context.WithCancel(app.globalCtx)
+
+	// 设置事件
 	app.eventsCtx = ctx
+
+	// 设置会话事件订阅, 用于订阅会话事件
 	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events)
+
+	// 设置消息事件订阅, 用于订阅消息事件
 	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)
+
+	// 设置权限事件订阅, 用于订阅权限事件
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
+
+	// 设置权限通知事件订阅, 用于订阅权限通知事件
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
+
+	// 设置历史事件订阅, 用于订阅历史事件
 	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
+
+	// 设置agent通知事件订阅, 用于订阅agent通知事件
 	setupSubscriber(ctx, app.serviceEventsWG, "agent-notifications", app.agentNotifications.Subscribe, app.events)
+
+	// 设置MCP事件订阅, 用于订阅MCP事件
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
+
+	// 设置LSP事件订阅, 用于订阅LSP事件
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
+
+	// 设置清理函数, 用于清理事件,serviceEventsWG用于控制这些订阅的协程
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()
 		return nil
 	}
+
+	// 添加清理函数, 用于清理事件,serviceEventsWG用于控制这些订阅的协程
 	app.cleanupFuncs = append(app.cleanupFuncs, cleanupFunc)
 }
 
 const subscriberSendTimeout = 2 * time.Second
 
+// setupSubscriber 设置订阅者，开启一个goroutine，用于订阅事件，用于监控订阅的消息，然后发送给输出通道, serviceEventsWG的协程可以被上游控制
 func setupSubscriber[T any](
-	ctx context.Context,
-	wg *sync.WaitGroup,
-	name string,
-	subscriber func(context.Context) <-chan pubsub.Event[T],
-	outputCh chan<- tea.Msg,
+	ctx context.Context, // 上下文
+	wg *sync.WaitGroup, // 并发同步
+	name string, // 名称
+	subscriber func(context.Context) <-chan pubsub.Event[T], // 订阅者处理函数
+	outputCh chan<- tea.Msg, // 输出通道
 ) {
-	wg.Go(func() {
+	// 启动一个goroutine，用于订阅事件
+	wg.Go(func() { // 启动一个goroutine，用于订阅事件
+		// subscriber 返回对应类型的一个事件通道
 		subCh := subscriber(ctx)
+
+		// 这里创建了一个立刻到期的定时器，并马上读取了 <-sendTimer.C 将其排空。
+		// 这样做的目的是为了后面在循环中可以安全地重用这个 timer
+		// 而不需要在循环内部频繁地分配新的 Timer 对象（节省内存和 GC 开销
 		sendTimer := time.NewTimer(0)
+
+		// 马上读取了 <-sendTimer.C 将其排空
 		<-sendTimer.C
+		// 停止定时器
 		defer sendTimer.Stop()
 
+		// 这个 select 语句是整个定时器存在的唯一目的。它让程序同时等待两个事情：
+		// 要么把消息成功塞进 outputCh，要么 2 秒钟超时（sendTimer.C 触发）。如果超时触发，说明下游消费者处理太慢
+		// 系统为了自保，宁可丢弃这条消息（记录一条 Message dropped due to slow consumer 的 debug 日志）
+		// 也不能让当前的 Goroutine 卡死在这里
 		for {
 			select {
-			case event, ok := <-subCh:
+			case event, ok := <-subCh: // 监控事件通道
 				if !ok {
+					// chan被关闭，直接结束订阅
 					slog.Debug("Subscription channel closed", "name", name)
 					return
 				}
+
+				// 创建一个tea.Msg类型的消息
 				var msg tea.Msg = event
+				// 优雅且安全地停止旧的 timer 并排空通道
 				if !sendTimer.Stop() {
 					select {
-					case <-sendTimer.C:
+					case <-sendTimer.C: // 排空定时器通道
 					default:
 					}
 				}
+				// 将定时器重置为 2 秒
 				sendTimer.Reset(subscriberSendTimeout)
 
 				select {
-				case outputCh <- msg:
-				case <-sendTimer.C:
+				case outputCh <- msg: // 将msg发送给输出通道， 如果在 2 秒内发送成功，皆大欢喜
+				case <-sendTimer.C: // 如果 2 秒到了 outputCh 还没收下这个 msg
+					// 丢弃消息，打印日志，然后继续下一次 for 循环
 					slog.Debug("Message dropped due to slow consumer", "name", name)
-				case <-ctx.Done():
+				case <-ctx.Done(): // 如果上下文取消，则结束订阅
 					slog.Debug("Subscription cancelled", "name", name)
 					return
 				}
-			case <-ctx.Done():
+			case <-ctx.Done(): // 如果上下文取消，则结束订阅
 				slog.Debug("Subscription cancelled", "name", name)
 				return
 			}
@@ -522,11 +587,14 @@ func setupSubscriber[T any](
 	})
 }
 
+// InitCoderAgent 初始化Coder Agent
 func (app *App) InitCoderAgent(ctx context.Context) error {
+	// 获取Coder Agent配置
 	coderAgentCfg := app.config.Config().Agents[config.AgentCoder]
 	if coderAgentCfg.ID == "" {
 		return fmt.Errorf("coder agent configuration is missing")
 	}
+	// 创建Coder Agent协调器
 	var err error
 	app.AgentCoordinator, err = agent.NewCoordinator(
 		ctx,
@@ -624,15 +692,19 @@ func (app *App) Shutdown() {
 	wg.Wait()
 }
 
-// checkForUpdates checks for available updates.
+// checkForUpdates 检查更新，开启一个goroutine，用于检查更新
 func (app *App) checkForUpdates(ctx context.Context) {
+	// 封装cxt和cancel函数，用于取消检查更新
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// 检查更新
 	info, err := update.Check(checkCtx, version.Version, update.Default)
 	if err != nil || !info.Available() {
 		return
 	}
+
+	// 发送更新事件
 	app.events <- UpdateAvailableMsg{
 		CurrentVersion: info.Current,
 		LatestVersion:  info.Latest,

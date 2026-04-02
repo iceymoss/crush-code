@@ -77,13 +77,20 @@ func RefreshResources(ctx context.Context, name string) {
 	updateState(name, StateConnected, nil, session, prev.Counts)
 }
 
+// getResources 获取MCP客户端的资源列表
+//
+//	ctx 上下文
+//	c MCP客户端会话
+//	返回MCP客户端资源列表和错误
 func getResources(ctx context.Context, c *ClientSession) ([]*Resource, error) {
+	// 如果InitializeResult 的 Capabilities.Resources 字段为空，则返回空列表
 	if c.InitializeResult().Capabilities.Resources == nil {
 		return nil, nil
 	}
+	// 调用 ListResources 获取资源列表
 	result, err := c.ListResources(ctx, &mcp.ListResourcesParams{})
 	if err != nil {
-		// Handle "Method not found" errors from MCP servers that don't support resources/list.
+		// 处理 "Method not found" 错误，来自不支持 resources/list 的 MCP 服务器
 		if isMethodNotFoundError(err) {
 			slog.Warn("MCP server does not support resources/list", "error", err)
 			return nil, nil
@@ -99,7 +106,9 @@ func isMethodNotFoundError(err error) bool {
 	return errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Code == jsonrpc.CodeMethodNotFound
 }
 
+// updateResources 更新MCP客户端资源列表，如果当前客户端的资源列表为空，则删除全局的这个MCP客户端资源列表
 func updateResources(name string, resources []*Resource) int {
+	// 如果当前客户端的资源列表为空，则删除全局的这个MCP客户端资源列表
 	if len(resources) == 0 {
 		allResources.Del(name)
 		return 0

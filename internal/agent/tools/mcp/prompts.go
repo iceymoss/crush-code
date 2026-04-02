@@ -67,7 +67,13 @@ func RefreshPrompts(ctx context.Context, name string) {
 	updateState(name, StateConnected, nil, session, prev.Counts)
 }
 
+// getPrompts 获取MCP客户端的提示词列表
+//
+//	ctx 上下文
+//	c MCP客户端会话
+//	返回MCP客户端提示词列表和错误
 func getPrompts(ctx context.Context, c *ClientSession) ([]*Prompt, error) {
+	// 如果InitializeResult 的 Capabilities.Prompts 字段为空，则返回空列表
 	if c.InitializeResult().Capabilities.Prompts == nil {
 		return nil, nil
 	}
@@ -78,7 +84,8 @@ func getPrompts(ctx context.Context, c *ClientSession) ([]*Prompt, error) {
 	return result.Prompts, nil
 }
 
-// updatePrompts updates the global mcpPrompts and mcpClient2Prompts maps
+// updatePrompts 更新指定 MCP 客户端在全局缓存中的提示词 (Prompt) 列表。
+// 如果传入的提示词列表为空，则从全局缓存中移除该客户端的记录以清理内存。
 func updatePrompts(mcpName string, prompts []*Prompt) {
 	if len(prompts) == 0 {
 		allPrompts.Del(mcpName)

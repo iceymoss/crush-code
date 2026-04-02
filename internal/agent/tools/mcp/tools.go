@@ -128,10 +128,15 @@ func RefreshTools(ctx context.Context, cfg *config.ConfigStore, name string) {
 	updateState(name, StateConnected, nil, session, prev.Counts)
 }
 
+// getTools 获取MCP客户端的工具列表
+//
+//	ctx 上下文
+//	session MCP客户端会话
+//	返回MCP客户端工具列表和错误
 func getTools(ctx context.Context, session *ClientSession) ([]*Tool, error) {
-	// Always call ListTools to get the actual available tools.
-	// The InitializeResult Capabilities.Tools field may be an empty object {},
-	// which is valid per MCP spec, but we still need to call ListTools to discover tools.
+	// 总是调用 ListTools 获取实际可用的工具列表
+	// InitializeResult 的 Capabilities.Tools 字段可能是空对象 {},
+	// 这在 MCP 规范中是有效的，但我们仍然需要调用 ListTools 来发现工具
 	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		return nil, err
@@ -139,25 +144,43 @@ func getTools(ctx context.Context, session *ClientSession) ([]*Tool, error) {
 	return result.Tools, nil
 }
 
+// updateTools 更新MCP客户端工具列表
+//
+//	cfg 配置存储
+//	name 客户端名称
+//	tools MCP客户端工具列表
+//	返回MCP客户端工具列表数量
 func updateTools(cfg *config.ConfigStore, name string, tools []*Tool) int {
+	// 剔除掉配置中被禁用的工具，保留有效工具
 	tools = filterDisabledTools(cfg, name, tools)
 	if len(tools) == 0 {
+		// 如果过滤后没有任何可用工具（可能是上游没提供，或者全部被禁用了），
+		// 则从全局/缓存中清理掉该客户端的工具记录，避免残留旧数据或空列表
 		allTools.Del(name)
 		return 0
 	}
+	// 更新MCP客户端工具列表
 	allTools.Set(name, tools)
 	return len(tools)
 }
 
-// filterDisabledTools removes tools that are disabled via config.
+// filterDisabledTools 剔除掉配置中被禁用的工具，保留有效工具
+//
+//	cfg 配置存储
+//	mcpName MCP客户端名称
+//	tools MCP客户端工具列表
+//	返回MCP客户端工具列表
 func filterDisabledTools(cfg *config.ConfigStore, mcpName string, tools []*Tool) []*Tool {
 	mcpCfg, ok := cfg.Config().MCP[mcpName]
+	// 如果MCP客户端配置不存在，或者禁用的工具列表为空，则返回原始工具列表
 	if !ok || len(mcpCfg.DisabledTools) == 0 {
 		return tools
 	}
 
+	// 创建一个新的工具列表
 	filtered := make([]*Tool, 0, len(tools))
 	for _, tool := range tools {
+		// 如果工具名称不在禁用的工具列表中，则添加到新的工具列表中
 		if !slices.Contains(mcpCfg.DisabledTools, tool.Name) {
 			filtered = append(filtered, tool)
 		}
