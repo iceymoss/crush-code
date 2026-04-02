@@ -592,6 +592,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 	// 获取Coder Agent配置
 	coderAgentCfg := app.config.Config().Agents[config.AgentCoder]
 	if coderAgentCfg.ID == "" {
+		// 提前返回错误，说明Coder Agent配置缺失
 		return fmt.Errorf("coder agent configuration is missing")
 	}
 	// 创建Coder Agent协调器

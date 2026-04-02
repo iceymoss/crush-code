@@ -87,7 +87,7 @@ type coordinator struct {
 	currentAgent SessionAgent            // 当前正在运行的agent
 	agents       map[string]SessionAgent // 所有已创建的agentm, name => agent
 
-	readyWg errgroup.Group // 准备等待组，用于等待所有agent准备完成
+	readyWg errgroup.Group // 准备等待组, 使用 errgroup (readyWg) 派发异步初始化任务，提升系统启动速度, 它不仅能等待所有并发任务完成，还能捕获并返回这些并发任务中发生的第一个错误。 只要其中任何一个 Go() 内部返回了 err != nil，后续在调用 Wait() 时就能直接拿到这个错误
 }
 
 func NewCoordinator(
@@ -383,13 +383,25 @@ func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderO
 	return modelOptions, temp, topP, topK, freqPenalty, presPenalty
 }
 
+// buildAgent 构建Coder Agent
+// ctx 上下文
+// prompt 系统提示词
+// agent 代理配置，包含代理的名称、描述、模型、工具等配置信息
+// isSubAgent 是否是子代理
+// 返回值：
+// - SessionAgent：构建好的Coder Agent实例
+// - error：构建过程中遇到的错误
 func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, agent config.Agent, isSubAgent bool) (SessionAgent, error) {
+	// 构建Coder Agent模型: large模型和small模型
 	large, small, err := c.buildAgentModels(ctx, isSubAgent)
 	if err != nil {
 		return nil, err
 	}
 
+	// 获取large模型提供商配置
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
+
+	// 构建Coder Agent
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
 		SmallModel:           small,
@@ -404,30 +416,47 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Notify:               c.notify,
 	})
 
+	// 使用 errgroup (readyWg) 派发异步初始化任务，提升系统启动速度
+	// 启动后台协程 A：异步构建并注入 System Prompt
 	c.readyWg.Go(func() error {
+		// 构建系统提示词 (可能涉及文件 I/O 或路径解析，较为耗时)
 		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
 		if err != nil {
+			// 如果发生错误，errgroup 会捕获它并在后续的 Wait() 中抛出
 			return err
 		}
+
+		// 设置系统提示词
 		result.SetSystemPrompt(systemPrompt)
 		return nil
 	})
 
 	c.readyWg.Go(func() error {
+		// 构建工具
 		tools, err := c.buildTools(ctx, agent)
 		if err != nil {
 			return err
 		}
+
+		// 设置工具
 		result.SetTools(tools)
 		return nil
 	})
 
+	// 直接返回初步构建的 Agent 对象
+	// 注意：调用方在实际使用该 Agent 执行任务前，必须调用 c.readyWg.Wait() 以确保其完全就绪
 	return result, nil
 }
 
+// buildTools 为指定的 Agent 构建并过滤其可用的工具箱
+// 这是一个“白名单”机制的装配工厂，确保 Agent 只能使用配置允许的工具
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fantasy.AgentTool, error) {
+	// 收集所有“原生内置”的候选工具，用于给agent使用的工具
 	var allTools []fantasy.AgentTool
+
+	// 检查并按需初始化一些比较特殊/重量级的内置agent工具
 	if slices.Contains(agent.AllowedTools, AgentToolName) {
+		// 构建工具 agent
 		agentTool, err := c.agentTool(ctx)
 		if err != nil {
 			return nil, err
@@ -435,6 +464,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		allTools = append(allTools, agentTool)
 	}
 
+	// 构建智能抓取工具 agent
 	if slices.Contains(agent.AllowedTools, tools.AgenticFetchToolName) {
 		agenticFetchTool, err := c.agenticFetchTool(ctx, nil)
 		if err != nil {
@@ -444,6 +474,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	}
 
 	// Get the model name for the agent
+	// 获取当前 Agent 使用的模型名称，主要用于传递给某些工具（如 BashTool）做遥测或特定策略处理
 	modelName := ""
 	if modelCfg, ok := c.cfg.Config().Models[agent.Model]; ok {
 		if model := c.cfg.Config().GetModel(modelCfg.Provider, modelCfg.Model); model != nil {
@@ -452,7 +483,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	}
 
 	allTools = append(allTools,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Options.Attribution, modelName),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Options.Attribution, modelName), // 构建 bash 工具
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
@@ -518,46 +549,63 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
+// TODO: TODO：当我们需要支持多个 Agent 时，我们需要修改这里，以便将特定于该 Agent 的模型配置传入进来
 func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Model, Model, error) {
+	// 获取large模型配置
 	largeModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeLarge]
 	if !ok {
 		return Model{}, Model{}, errLargeModelNotSelected
 	}
+
+	// 获取small模型配置
 	smallModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeSmall]
 	if !ok {
 		return Model{}, Model{}, errSmallModelNotSelected
 	}
 
+	// 获取large模型提供商配置
 	largeProviderCfg, ok := c.cfg.Config().Providers.Get(largeModelCfg.Provider)
 	if !ok {
 		return Model{}, Model{}, errLargeModelProviderNotConfigured
 	}
 
+	// 构建large模型提供商
 	largeProvider, err := c.buildProvider(largeProviderCfg, largeModelCfg, isSubAgent)
 	if err != nil {
 		return Model{}, Model{}, err
 	}
 
+	// 获取small模型提供商配置
 	smallProviderCfg, ok := c.cfg.Config().Providers.Get(smallModelCfg.Provider)
 	if !ok {
 		return Model{}, Model{}, errSmallModelProviderNotConfigured
 	}
 
+	// 构建small模型提供商
 	smallProvider, err := c.buildProvider(smallProviderCfg, smallModelCfg, true)
 	if err != nil {
 		return Model{}, Model{}, err
 	}
 
+	// 构建large模型Catwalk模型
 	var largeCatwalkModel *catwalk.Model
+	// 构建small模型Catwalk模型
 	var smallCatwalkModel *catwalk.Model
 
+	// 遍历large模型提供商的模型配置
 	for _, m := range largeProviderCfg.Models {
+		// 如果模型ID匹配，则设置large模型Catwalk模型为当前模型
+		// 其实就是检查该提供商是否支持该模型
 		if m.ID == largeModelCfg.Model {
 			largeCatwalkModel = &m
 		}
 	}
+
+	// 遍历small模型提供商的模型配置
 	for _, m := range smallProviderCfg.Models {
+		// 如果模型ID匹配，则设置small模型Catwalk模型为当前模型
 		if m.ID == smallModelCfg.Model {
+			// 其实就是检查该提供商是否支持该模型
 			smallCatwalkModel = &m
 		}
 	}
@@ -573,18 +621,23 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 	largeModelID := largeModelCfg.Model
 	smallModelID := smallModelCfg.Model
 
+	// 如果large模型提供商是OpenRouter，并且该模型支持Exacto，则添加Exacto后缀
 	if largeModelCfg.Provider == openrouter.Name && isExactoSupported(largeModelID) {
 		largeModelID += ":exacto"
 	}
 
+	// 如果small模型提供商是OpenRouter，并且该模型支持Exacto，则添加Exacto后缀
 	if smallModelCfg.Provider == openrouter.Name && isExactoSupported(smallModelID) {
 		smallModelID += ":exacto"
 	}
 
+	// 构建large模型
 	largeModel, err := largeProvider.LanguageModel(ctx, largeModelID)
 	if err != nil {
 		return Model{}, Model{}, err
 	}
+
+	// 构建small模型
 	smallModel, err := smallProvider.LanguageModel(ctx, smallModelID)
 	if err != nil {
 		return Model{}, Model{}, err
@@ -804,13 +857,21 @@ func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
 	return err == nil && opts.Thinking != nil
 }
 
+// buildProvider 构建模型提供商
+// providerCfg 提供商配置，包含提供商的名称、类型、API密钥、基础URL等配置信息
+// model 模型配置，包含模型的名称、类型、模型ID等配置信息
+// isSubAgent 是否是子代理
+// 返回值：
+// - fantasy.Provider：构建好的模型提供商实例
+// - error：构建过程中遇到的错误
 func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {
+	// 这里使用深拷贝，避免修改原始数据
 	headers := maps.Clone(providerCfg.ExtraHeaders)
 	if headers == nil {
 		headers = make(map[string]string)
 	}
 
-	// handle special headers for anthropic
+	// 处理anthropic的特殊头信息
 	if providerCfg.Type == anthropic.Name && c.isAnthropicThinking(model) {
 		if v, ok := headers["anthropic-beta"]; ok {
 			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
@@ -819,27 +880,28 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		}
 	}
 
+	// 解析提供商的API密钥和基础URL
 	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
 	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
 
 	switch providerCfg.Type {
-	case openai.Name:
+	case openai.Name: // 构建OpenAI提供商
 		return c.buildOpenaiProvider(baseURL, apiKey, headers)
-	case anthropic.Name:
+	case anthropic.Name: // 构建Anthropic提供商
 		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID)
-	case openrouter.Name:
+	case openrouter.Name: // 构建OpenRouter提供商
 		return c.buildOpenrouterProvider(baseURL, apiKey, headers)
-	case vercel.Name:
+	case vercel.Name: // 构建Vercel提供商
 		return c.buildVercelProvider(baseURL, apiKey, headers)
-	case azure.Name:
+	case azure.Name: // 构建Azure提供商
 		return c.buildAzureProvider(baseURL, apiKey, headers, providerCfg.ExtraParams)
-	case bedrock.Name:
+	case bedrock.Name: // 构建Bedrock提供商
 		return c.buildBedrockProvider(apiKey, headers)
-	case google.Name:
+	case google.Name: // 构建Google提供商
 		return c.buildGoogleProvider(baseURL, apiKey, headers)
-	case "google-vertex":
+	case "google-vertex": // 构建Google Vertex提供商
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
-	case openaicompat.Name:
+	case openaicompat.Name: // 构建OpenAI兼容提供商
 		if providerCfg.ID == string(catwalk.InferenceProviderZAI) {
 			if providerCfg.ExtraBody == nil {
 				providerCfg.ExtraBody = map[string]any{}
@@ -847,9 +909,9 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 			providerCfg.ExtraBody["tool_stream"] = true
 		}
 		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent)
-	case hyper.Name:
+	case hyper.Name: // 构建Hyper提供商
 		return c.buildHyperProvider(baseURL, apiKey)
-	default:
+	default: // 不支持的提供商类型
 		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
 	}
 }

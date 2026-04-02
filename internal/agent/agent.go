@@ -47,79 +47,107 @@ import (
 )
 
 const (
+	// DefaultSessionName 默认的新建会话名称
 	DefaultSessionName = "Untitled Session"
 
 	// Constants for auto-summarization thresholds
+	// 自动摘要触发常量：用于控制长对话的上下文窗口内存管理，防止 Token 超载
+
+	// largeContextWindowThreshold 大模型上下文窗口阈值 (对话 Token 逼近该值时触发摘要压缩)
 	largeContextWindowThreshold = 200_000
-	largeContextWindowBuffer    = 20_000
-	smallContextWindowRatio     = 0.2
+	// largeContextWindowBuffer 摘要安全缓冲区 (即在距离满载还有 2 万 Token 时提前介入处理)
+	largeContextWindowBuffer = 20_000
+	// smallContextWindowRatio 小模型处理摘要时占用的上下文窗口比例限制
+	smallContextWindowRatio = 0.2
 )
 
+// userAgent 包含当前程序版本号的客户端 User-Agent 标识
 var userAgent = fmt.Sprintf("Charm-Crush/%s (https://charm.land/crush)", version.Version)
 
 //go:embed templates/title.md
-var titlePrompt []byte
+var titlePrompt []byte // titlePrompt 嵌入的系统提示词模板，指导 AI 如何为当前聊天会话生成合适的标题
 
 //go:embed templates/summary.md
-var summaryPrompt []byte
+var summaryPrompt []byte // summaryPrompt 嵌入的系统提示词模板，指导 AI 如何压缩和总结过长的历史聊天记录
 
 // Used to remove <think> tags from generated titles.
+// thinkTagRegex 用于匹配并移除 AI 输出(例如深度思考模型的输出)中包含的 <think>...</think> 内部思考过程标签
 var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 
+// SessionAgentCall 定义了单次请求 Agent 执行任务所需的全部参数载荷
 type SessionAgentCall struct {
-	SessionID        string
-	Prompt           string
-	ProviderOptions  fantasy.ProviderOptions
-	Attachments      []message.Attachment
-	MaxOutputTokens  int64
-	Temperature      *float64
-	TopP             *float64
-	TopK             *int64
-	FrequencyPenalty *float64
-	PresencePenalty  *float64
-	NonInteractive   bool
+	SessionID        string                  // 当前请求所属的会话 ID
+	Prompt           string                  // 用户的输入内容 (提示词)
+	ProviderOptions  fantasy.ProviderOptions // 底层模型提供商的专属配置选项
+	Attachments      []message.Attachment    // 随用户请求附带的文件、图片等附件
+	MaxOutputTokens  int64                   // 限制模型生成的最大输出 Token 数量
+	Temperature      *float64                // 采样温度：控制 AI 答复的随机性和创造性 (值越高越发散)
+	TopP             *float64                // 核采样比例：控制候选词的概率质量范围
+	TopK             *int64                  // 限制 AI 仅在概率最高的前 K 个词中进行采样
+	FrequencyPenalty *float64                // 频率惩罚：抑制 AI 重复使用刚刚生成过的词汇
+	PresencePenalty  *float64                // 存在惩罚：鼓励 AI 在输出中引入全新的话题和词汇
+	NonInteractive   bool                    // 是否为后台静默任务 (例如自动生成标题时无需在终端流式打字输出)
 }
 
+// SessionAgent 定义了会话代理(AI Agent)必须实现的核心功能契约
 type SessionAgent interface {
+	// Run 执行一次核心交互任务，调用大模型并返回执行结果
 	Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
+	// SetModels 动态切换当前 Agent 背后使用的主模型(Large)和辅助模型(Small)
 	SetModels(large Model, small Model)
+	// SetTools 动态赋予或更新当前 Agent 可调用的外部工具列表 (如执行命令、读写文件)
 	SetTools(tools []fantasy.AgentTool)
+	// SetSystemPrompt 动态修改当前 Agent 的系统人设和行为准则
 	SetSystemPrompt(systemPrompt string)
+	// Cancel 强行中断指定会话中正在进行的大模型网络请求
 	Cancel(sessionID string)
+	// CancelAll 强行中断该 Agent 下所有正在进行的请求
 	CancelAll()
+	// IsSessionBusy 检查指定的会话当前是否正在等待或接收大模型的响应
 	IsSessionBusy(sessionID string) bool
+	// IsBusy 检查当前 Agent 是否有任何正在处理的任务
 	IsBusy() bool
+	// QueuedPrompts 返回指定会话的等待队列中排队的请求数量 (防并发冲突)
 	QueuedPrompts(sessionID string) int
+	// QueuedPromptsList 返回指定会话中正在排队的请求内容列表
 	QueuedPromptsList(sessionID string) []string
+	// ClearQueue 清空指定会话的请求排队队列，丢弃未处理的输入
 	ClearQueue(sessionID string)
+	// Summarize 主动触发对话历史的压缩与摘要，释放上下文窗口空间
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
+	// Model 获取当前 Agent 正在使用的主模型配置
 	Model() Model
 }
 
+// Model 是一个复合结构体，将底层大模型能力与外部配置绑定在一起
 type Model struct {
-	Model      fantasy.LanguageModel
-	CatwalkCfg catwalk.Model
-	ModelCfg   config.SelectedModel
+	Model      fantasy.LanguageModel // 底层实际负责网络请求、与大模型交互的接口实例
+	CatwalkCfg catwalk.Model         // Catwalk (可能为内部路由或底层模型库) 的模型具体配置
+	ModelCfg   config.SelectedModel  // 用户在配置文件中选中的原始模型配置信息
 }
 
+// sessionAgent 是 SessionAgent 接口的核心实现，负责管理单个或多个会话的并发状态
 type sessionAgent struct {
-	largeModel         *csync.Value[Model]
-	smallModel         *csync.Value[Model]
-	systemPromptPrefix *csync.Value[string]
-	systemPrompt       *csync.Value[string]
-	tools              *csync.Slice[fantasy.AgentTool]
+	// 以下字段使用 csync 包装，确保在运行时动态切换模型或修改人设时的多协程并发安全
+	largeModel         *csync.Value[Model]             // 当前正在使用的主模型 (大模型)
+	smallModel         *csync.Value[Model]             // 当前正在使用的辅助模型 (小模型，用于摘要等轻量任务)
+	systemPromptPrefix *csync.Value[string]            // 系统提示词的前缀部分 (通常用于强加系统底层规则)
+	systemPrompt       *csync.Value[string]            // 当前 Agent 的主要系统提示词 (人设/行为准则)
+	tools              *csync.Slice[fantasy.AgentTool] // 当前 Agent 可用的外部工具集 (如终端执行、文件读写)
 
-	isSubAgent           bool
-	sessions             session.Service
-	messages             message.Service
-	disableAutoSummarize bool
-	isYolo               bool
-	notify               pubsub.Publisher[notify.Notification]
+	isSubAgent           bool                                  // 标识当前 Agent 是否为被另一个 Agent 唤起的子代理
+	sessions             session.Service                       // 底层会话持久化服务 (用于读写数据库里的会话元数据)
+	messages             message.Service                       // 底层消息持久化服务 (用于读写具体的聊天记录)
+	disableAutoSummarize bool                                  // 是否强制关闭上下文超长时的自动摘要功能
+	isYolo               bool                                  // "YOLO" 模式 (You Only Live Once)：开启后，Agent 调用高危工具(如执行 shell 命令)时将跳过人工确认拦截，直接执行
+	notify               pubsub.Publisher[notify.Notification] // 事件发布器，用于向外(如 UI 层)广播状态变化
 
-	messageQueue   *csync.Map[string, []SessionAgentCall]
-	activeRequests *csync.Map[string, context.CancelFunc]
+	// 并发控制与队列管理
+	messageQueue   *csync.Map[string, []SessionAgentCall] // 消息排队队列：映射关系为 SessionID -> 待处理的消息列表
+	activeRequests *csync.Map[string, context.CancelFunc] // 活跃请求注册表：映射关系为 SessionID -> 取消函数的指针，用于随时打断某个会话的生成
 }
 
+// SessionAgentOptions 是初始化 sessionAgent 时使用的参数对象，采用配置参数模式避免构造函数过长
 type SessionAgentOptions struct {
 	LargeModel           Model
 	SmallModel           Model
@@ -134,6 +162,7 @@ type SessionAgentOptions struct {
 	Notify               pubsub.Publisher[notify.Notification]
 }
 
+// NewSessionAgent 构造函数：根据传入的选项实例化 sessionAgent，并将普通变量包装为并发安全的 csync 类型
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
@@ -149,8 +178,8 @@ func NewSessionAgent(
 		tools:                csync.NewSliceFrom(opts.Tools),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
-		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:       csync.NewMap[string, context.CancelFunc](),
+		messageQueue:         csync.NewMap[string, []SessionAgentCall](), // 初始化空的消息等待队列
+		activeRequests:       csync.NewMap[string, context.CancelFunc](), // 初始化空的活动请求注册表
 	}
 }
 
