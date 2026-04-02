@@ -22,7 +22,6 @@ import (
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/home"
-	"github.com/charmbracelet/crush/internal/log"
 	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/qjebbs/go-jsons"
 )
@@ -51,12 +50,6 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if debug {
 		cfg.Options.Debug = true
 	}
-
-	// Setup logs
-	log.Setup(
-		filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)),
-		cfg.Options.Debug,
-	)
 
 	// Load workspace config last so it has highest priority.
 	if wsData, err := os.ReadFile(store.workspacePath); err == nil && len(wsData) > 0 {
@@ -749,6 +742,25 @@ func GlobalConfig() string {
 	return filepath.Join(home.Config(), appName, fmt.Sprintf("%s.json", appName))
 }
 
+// GlobalCacheDir returns the path to the global cache directory for the
+// application.
+func GlobalCacheDir() string {
+	if crushCache := os.Getenv("CRUSH_CACHE_DIR"); crushCache != "" {
+		return crushCache
+	}
+	if xdgCacheHome := os.Getenv("XDG_CACHE_HOME"); xdgCacheHome != "" {
+		return filepath.Join(xdgCacheHome, appName)
+	}
+	if runtime.GOOS == "windows" {
+		localAppData := cmp.Or(
+			os.Getenv("LOCALAPPDATA"),
+			filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Local"),
+		)
+		return filepath.Join(localAppData, appName, "cache")
+	}
+	return filepath.Join(home.Dir(), ".cache", appName)
+}
+
 // GlobalConfigData returns the path to the main data directory for the application.
 // this config is used when the app overrides configurations instead of updating the global config.
 func GlobalConfigData() string {
@@ -771,6 +783,15 @@ func GlobalConfigData() string {
 	}
 
 	return filepath.Join(home.Dir(), ".local", "share", appName, fmt.Sprintf("%s.json", appName))
+}
+
+// GlobalWorkspaceDir returns the path to the global server workspace
+// directory. This directory acts as a meta-workspace for the server
+// process, giving it a real workingDir so that config loading, scoped
+// writes, and provider resolution behave identically to project
+// workspaces.
+func GlobalWorkspaceDir() string {
+	return filepath.Dir(GlobalConfigData())
 }
 
 func assignIfNil[T any](ptr **T, val T) {
