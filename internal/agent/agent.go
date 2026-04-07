@@ -529,6 +529,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
 		} else if isPermissionErr {
 			currentAssistant.AddFinish(message.FinishReasonPermissionDenied, "User denied permission", "")
+		} else if errors.Is(err, hyper.ErrUnauthorized) {
+			currentAssistant.AddFinish(message.FinishReasonError, "Unauthorized", `Authentication with Hyper failed. Please run "crush auth" to re-authenticate.`)
 		} else if errors.Is(err, hyper.ErrNoCredits) {
 			url := hyper.BaseURL()
 			link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
