@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 )
 
 type (
@@ -53,4 +54,18 @@ func GetSupportsImagesFromContext(ctx context.Context) bool {
 // GetModelNameFromContext retrieves the model name from the context.
 func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
+}
+
+// FirstLineDescription returns the first non-empty line from the embedded
+// markdown description. This extracts just the concise summary line,
+// significantly reducing token usage while preserving essential tool context.
+func FirstLineDescription(content []byte) string {
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
