@@ -60,8 +60,8 @@ func GetModelNameFromContext(ctx context.Context) string {
 // markdown description. This extracts just the concise summary line,
 // significantly reducing token usage while preserving essential tool context.
 func FirstLineDescription(content []byte) string {
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(content), "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			return line
