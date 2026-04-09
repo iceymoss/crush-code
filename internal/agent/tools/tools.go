@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 )
 
@@ -56,12 +57,14 @@ func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
 }
 
-// FirstLineDescription returns the first non-empty line from the embedded
-// markdown description. This extracts just the concise summary line,
-// significantly reducing token usage while preserving essential tool context.
+// FirstLineDescription returns just the first non-empty line from the embedded
+// markdown description when CRUSH_SHORT_TOOL_DESCRIPTIONS is set, significantly
+// reducing token usage. Otherwise returns the full description.
 func FirstLineDescription(content []byte) string {
-	lines := strings.SplitSeq(string(content), "\n")
-	for line := range lines {
+	if os.Getenv("CRUSH_SHORT_TOOL_DESCRIPTIONS") == "" {
+		return strings.TrimSpace(string(content))
+	}
+	for line := range strings.SplitSeq(string(content), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			return line
