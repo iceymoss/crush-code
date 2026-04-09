@@ -61,7 +61,7 @@ func GetModelNameFromContext(ctx context.Context) string {
 // markdown description when CRUSH_SHORT_TOOL_DESCRIPTIONS is set, significantly
 // reducing token usage. Otherwise returns the full description.
 func FirstLineDescription(content []byte) string {
-	if os.Getenv("CRUSH_SHORT_TOOL_DESCRIPTIONS") == "" {
+	if v, _ := strconv.ParseBool(os.Getenv("CRUSH_SHORT_TOOL_DESCRIPTIONS")); !v {
 		return strings.TrimSpace(string(content))
 	}
 	for line := range strings.SplitSeq(string(content), "\n") {
