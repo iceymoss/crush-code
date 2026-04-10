@@ -1,5 +1,10 @@
 Execute shell commands; long-running commands automatically move to background and return a shell ID.
 
+<cross_platform>
+Uses mvdan/sh interpreter (Bash-compatible on all platforms including Windows).
+Use forward slashes for paths: "ls C:/foo/bar" not "ls C:\foo\bar".
+Common shell builtins and core utils available on Windows.
+</cross_platform>
 
 <execution_steps>
 1. Directory Verification: If creating directories/files, use LS tool to verify parent exists
