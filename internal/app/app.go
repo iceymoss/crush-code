@@ -178,51 +178,66 @@ func (app *App) AgentNotifications() *pubsub.Broker[notify.Notification] {
 	return app.agentNotifications
 }
 
-// resolveSession resolves which session to use for a non-interactive run
-// If continueSessionID is set, it looks up that session by ID
-// If useLast is set, it returns the most recently updated top-level session
-// Otherwise, it creates a new session
+// resolveSession 决定在非交互式运行中应该使用哪个会话 (session)
+// 如果传入了 continueSessionID，它会通过该 ID 查找对应的历史会话
+// 如果设置了 useLast 为 true，它会返回系统里最近更新的、且处于顶层的会话
+// 如果以上条件都不满足，它会创建一个全新的会话
 func (app *App) resolveSession(ctx context.Context, continueSessionID string, useLast bool) (session.Session, error) {
 	switch {
+	// 情况 1：指定了具体的会话 ID
 	case continueSessionID != "":
+		// 安全检查：不允许恢复 Agent 工具专用的会话
 		if app.Sessions.IsAgentToolSession(continueSessionID) {
 			return session.Session{}, fmt.Errorf("cannot continue an agent tool session: %s", continueSessionID)
 		}
+
+		// 尝试根据 ID 从数据库/内存中获取会话
 		sess, err := app.Sessions.Get(ctx, continueSessionID)
 		if err != nil {
-			return session.Session{}, fmt.Errorf("session not found: %s", continueSessionID)
+			return session.Session{}, fmt.Errorf("session not found: %s", continueSessionID) // 找不到会话则报错
 		}
+
+		// 规则检查：只能恢复主会话，如果这个会话有父级 ID（说明是子会话），则拒绝恢复
 		if sess.ParentSessionID != "" {
 			return session.Session{}, fmt.Errorf("cannot continue a child session: %s", continueSessionID)
 		}
+
+		// 所有检查通过，返回找到的会话
 		return sess, nil
 
+	// 情况 2：要求使用上一次的会话
 	case useLast:
+		// 获取最近更新的一个会话
 		sess, err := app.Sessions.GetLast(ctx)
 		if err != nil {
-			return session.Session{}, fmt.Errorf("no sessions found to continue")
+			return session.Session{}, fmt.Errorf("no sessions found to continue") // 如果没有任何历史记录则报错
 		}
 		return sess, nil
 
+	// 情况 3：默认行为（没给 ID 且 useLast 为 false）
 	default:
+		// 创建一个全新的会话，并使用系统默认名称
 		return app.Sessions.Create(ctx, agent.DefaultSessionName)
 	}
 }
 
-// RunNonInteractive runs the application in non-interactive mode with the
-// given prompt, printing to stdout.
+// RunNonInteractive 在非交互模式下运行应用程序，
+// 使用给定的提示词 (prompt) 并将结果打印到标准输出 (stdout)
 func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, hideSpinner bool, continueSessionID string, useLast bool) error {
 	slog.Info("Running in non-interactive mode")
 
+	// 创建一个取消上下文，用于取消非交互模式
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// 模型覆盖设置：如果用户通过命令行参数指定了特定模型，则覆盖默认配置
 	if largeModel != "" || smallModel != "" {
 		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel); err != nil {
 			return fmt.Errorf("failed to override models: %w", err)
 		}
 	}
 
+	// 变量声明：用于判断当前是否在真实的终端 (TTY) 环境中运行
 	var (
 		spinner   *format.Spinner
 		stdoutTTY bool
@@ -231,25 +246,31 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		progress  bool
 	)
 
+	// 终端检测：检查输入、输出和错误流是否连接到了真实的终端
 	if f, ok := output.(*os.File); ok {
 		stdoutTTY = term.IsTerminal(f.Fd())
 	}
 	stderrTTY = term.IsTerminal(os.Stderr.Fd())
 	stdinTTY = term.IsTerminal(os.Stdin.Fd())
+
+	// 读取配置决定是否显示进度条
 	progress = app.config.Config().Options.Progress == nil || *app.config.Config().Options.Progress
 
+	// UI 动画设置：如果不隐藏加载动画，且标准错误输出是终端，则初始化加载动画 (Spinner)
 	if !hideSpinner && stderrTTY {
 		t := styles.DefaultStyles()
 
 		// Detect background color to set the appropriate color for the
 		// spinner's 'Generating...' text. Without this, that text would be
 		// unreadable in light terminals.
+		// 侦测终端背景色（深色或浅色），以确保 "Generating..." 文字不会因为背景色相同而看不见
 		hasDarkBG := true
 		if f, ok := output.(*os.File); ok && stdinTTY && stdoutTTY {
 			hasDarkBG = lipgloss.HasDarkBackground(os.Stdin, f)
 		}
 		defaultFG := lipgloss.LightDark(hasDarkBG)(charmtone.Pepper, t.FgBase)
 
+		// 配置并启动加载动画
 		spinner = format.NewSpinner(ctx, cancel, anim.Settings{
 			Size:        10,
 			Label:       "Generating",
@@ -261,7 +282,7 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		spinner.Start()
 	}
 
-	// Helper function to stop spinner once.
+	// 定义一个停止加载动画的辅助函数
 	stopSpinner := func() {
 		if !hideSpinner && spinner != nil {
 			spinner.Stop()
@@ -269,16 +290,18 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		}
 	}
 
-	// Wait for MCP initialization to complete before reading MCP tools.
+	// 等待MCP初始化完成，再读取MCP工具
 	if err := mcp.WaitForInit(ctx); err != nil {
 		return fmt.Errorf("failed to wait for MCP initialization: %w", err)
 	}
 
-	// force update of agent models before running so mcp tools are loaded
+	// 强制更新 AI 代理的模型状态，确保刚才加载的 MCP 工具生效
 	app.AgentCoordinator.UpdateModels(ctx)
 
+	// 确保函数退出时无论如何都会停止动画
 	defer stopSpinner()
 
+	// 会话管理：调用 resolveSession 决定使用哪个会话
 	sess, err := app.resolveSession(ctx, continueSessionID, useLast)
 	if err != nil {
 		return fmt.Errorf("failed to create session for non-interactive mode: %w", err)
@@ -292,27 +315,37 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 
 	// Automatically approve all permission requests for this non-interactive
 	// session.
+	// 非常重要：自动批准该非交互会话的所有权限请求，因为无人值守模式下用户无法手动点击同意
 	app.Permissions.AutoApproveSession(sess.ID)
 
+	// 定义一个用于接收 AI 执行结果的channel
 	type response struct {
 		result *fantasy.AgentResult
 		err    error
 	}
+
 	done := make(chan response, 1)
 
+	// 启动一个goroutine，用于执行AI代理，并接收结果
 	go func(ctx context.Context, sessionID, prompt string) {
+		// 调用agent协调器执行AI代理，并返回结果
 		result, err := app.AgentCoordinator.Run(ctx, sess.ID, prompt)
 		if err != nil {
+			// 如果执行失败，则将错误信息发送给done channel
 			done <- response{
 				err: fmt.Errorf("failed to start agent processing stream: %w", err),
 			}
 			return
 		}
+
+		// 将结果发送给done channel
 		done <- response{
 			result: result,
 		}
 	}(ctx, sess.ID, prompt)
 
+	// 事件流监听与流式输出:
+	// 订阅系统消息事件，用来捕捉 AI 实时生成的一字一句
 	messageEvents := app.Messages.Subscribe(ctx)
 	messageReadBytes := make(map[string]int)
 	var printed bool

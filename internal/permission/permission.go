@@ -68,7 +68,7 @@ type permissionService struct {
 	sessionPermissions    []PermissionRequest                    // 会话权限列表, 记录各个会话的工具调用权限
 	sessionPermissionsMu  sync.RWMutex                           // 会话权限列表互斥锁
 	pendingRequests       *csync.Map[string, chan bool]          // 待处理的请求列表，待处理的请求列表，权限id => chan bool 用于同步授权状态
-	autoApproveSessions   map[string]bool                        // 自动批准会话列表, 记录各个会话的自动批准状态
+	autoApproveSessions   map[string]bool                        // 自动批准会话列表, 记录各个会话的自动批准状态, sessionID => bool
 	autoApproveSessionsMu sync.RWMutex                           // 自动批准会话列表互斥锁
 	skip                  bool                                   // 是否跳过请求
 	allowedTools          []string                               // 允许的工具列表, 允许的工具列表, 记录各个工具的权限
