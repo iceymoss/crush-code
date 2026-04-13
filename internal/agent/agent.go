@@ -792,30 +792,7 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			continue
 		}
 		if m.Role == message.Tool {
-			// Filter out tool results that have no matching tool call. An orphaned
-			// result causes every subsequent API call to fail validation.
-			aiMsgs := m.ToAIMessage()
-			if len(aiMsgs) == 0 {
-				continue
-			}
-			var validParts []fantasy.MessagePart
-			for _, part := range aiMsgs[0].Content {
-				tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
-				if !ok {
-					validParts = append(validParts, part)
-					continue
-				}
-				if _, known := knownToolCallIDs[tr.ToolCallID]; known {
-					validParts = append(validParts, part)
-				} else {
-					slog.Warn("Dropping orphaned tool result with no matching tool call",
-						"tool_call_id", tr.ToolCallID,
-					)
-				}
-			}
-			if len(validParts) > 0 {
-				msg := aiMsgs[0]
-				msg.Content = validParts
+			if msg, ok := filterOrphanedToolResults(m, knownToolCallIDs); ok {
 				history = append(history, msg)
 			}
 			continue
@@ -836,6 +813,39 @@ If not, please feel free to ignore. Again do not mention this message to the use
 	}
 
 	return history, files
+}
+
+// filterOrphanedToolResults converts a tool message to a fantasy.Message,
+// dropping any tool result parts whose tool_call_id has no matching tool call
+// in the known set. An orphaned result causes API validation to fail on every
+// subsequent turn, permanently locking the session. Returns the filtered
+// message and true if at least one valid part remains.
+func filterOrphanedToolResults(m message.Message, knownToolCallIDs map[string]struct{}) (fantasy.Message, bool) {
+	aiMsgs := m.ToAIMessage()
+	if len(aiMsgs) == 0 {
+		return fantasy.Message{}, false
+	}
+	var validParts []fantasy.MessagePart
+	for _, part := range aiMsgs[0].Content {
+		tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
+		if !ok {
+			validParts = append(validParts, part)
+			continue
+		}
+		if _, known := knownToolCallIDs[tr.ToolCallID]; known {
+			validParts = append(validParts, part)
+		} else {
+			slog.Warn("Dropping orphaned tool result with no matching tool call",
+				"tool_call_id", tr.ToolCallID,
+			)
+		}
+	}
+	if len(validParts) == 0 {
+		return fantasy.Message{}, false
+	}
+	msg := aiMsgs[0]
+	msg.Content = validParts
+	return msg, true
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {
