@@ -64,7 +64,10 @@ var titlePrompt []byte
 var summaryPrompt []byte
 
 // Used to remove <think> tags from generated titles.
-var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
+var (
+	thinkTagRegex       = regexp.MustCompile(`(?s)<think>.*?</think>`)
+	orphanThinkTagRegex = regexp.MustCompile(`</?think>`)
+)
 
 type SessionAgentCall struct {
 	SessionID        string
@@ -769,6 +772,16 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			),
 		))
 	}
+	// Collect all tool call IDs present in assistant messages.
+	knownToolCallIDs := make(map[string]struct{})
+	for _, m := range msgs {
+		if m.Role == message.Assistant {
+			for _, tc := range m.ToolCalls() {
+				knownToolCallIDs[tc.ID] = struct{}{}
+			}
+		}
+	}
+
 	for _, m := range msgs {
 		if len(m.Parts) == 0 {
 			continue
@@ -776,6 +789,35 @@ If not, please feel free to ignore. Again do not mention this message to the use
 		// Assistant message without content or tool calls (cancelled before it
 		// returned anything).
 		if m.Role == message.Assistant && len(m.ToolCalls()) == 0 && m.Content().Text == "" && m.ReasoningContent().String() == "" {
+			continue
+		}
+		if m.Role == message.Tool {
+			// Filter out tool results that have no matching tool call. An orphaned
+			// result causes every subsequent API call to fail validation.
+			aiMsgs := m.ToAIMessage()
+			if len(aiMsgs) == 0 {
+				continue
+			}
+			var validParts []fantasy.MessagePart
+			for _, part := range aiMsgs[0].Content {
+				tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
+				if !ok {
+					validParts = append(validParts, part)
+					continue
+				}
+				if _, known := knownToolCallIDs[tr.ToolCallID]; known {
+					validParts = append(validParts, part)
+				} else {
+					slog.Warn("Dropping orphaned tool result with no matching tool call",
+						"tool_call_id", tr.ToolCallID,
+					)
+				}
+			}
+			if len(validParts) > 0 {
+				msg := aiMsgs[0]
+				msg.Content = validParts
+				history = append(history, msg)
+			}
 			continue
 		}
 		history = append(history, m.ToAIMessage()...)
@@ -898,6 +940,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 
 	// Remove thinking tags if present.
 	title = thinkTagRegex.ReplaceAllString(title, "")
+	title = orphanThinkTagRegex.ReplaceAllString(title, "")
 
 	title = strings.TrimSpace(title)
 	title = cmp.Or(title, DefaultSessionName)
