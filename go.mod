@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	charm.land/bubbles/v2 v2.1.0
-	charm.land/bubbletea/v2 v2.0.3
+	charm.land/bubbletea/v2 v2.0.5
 	charm.land/catwalk v0.35.4
 	charm.land/fang/v2 v2.0.1
 	charm.land/fantasy v0.17.2
@@ -24,8 +24,8 @@ require (
 	github.com/charlievieth/fastwalk v1.0.14
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/openai-go v0.0.0-20260319145158-d0740cc34266
-	github.com/charmbracelet/ultraviolet v0.0.0-20260413133134-73592393e1ad
-	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/charmbracelet/ultraviolet v0.0.0-20260413211237-bd52878bcec2
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/editor v0.2.0
 	github.com/charmbracelet/x/etag v0.2.0
 	github.com/charmbracelet/x/exp/charmtone v0.0.0-20260109001716-2fbdffcb221f
@@ -153,7 +153,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/mattn/go-runewidth v0.0.21 // indirect
+	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
