@@ -2561,17 +2561,17 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			// ------
 			// help
 			const compactHeaderHeight = 1
-		var headerRect, mainRect image.Rectangle
-		layout.Vertical(
-			layout.Len(compactHeaderHeight),
-			layout.Fill(1),
-		).Split(appRect).Assign(&headerRect, &mainRect)
-		detailsHeight := min(sessionDetailsMaxHeight, area.Dy()-1) // One row for the header
-		var sessionDetailsArea image.Rectangle
-		layout.Vertical(
-			layout.Len(detailsHeight),
-			layout.Fill(1),
-		).Split(appRect).Assign(&sessionDetailsArea, new(image.Rectangle))
+			var headerRect, mainRect image.Rectangle
+			layout.Vertical(
+				layout.Len(compactHeaderHeight),
+				layout.Fill(1),
+			).Split(appRect).Assign(&headerRect, &mainRect)
+			detailsHeight := min(sessionDetailsMaxHeight, area.Dy()-1) // One row for the header
+			var sessionDetailsArea image.Rectangle
+			layout.Vertical(
+				layout.Len(detailsHeight),
+				layout.Fill(1),
+			).Split(appRect).Assign(&sessionDetailsArea, new(image.Rectangle))
 			uiLayout.sessionDetails = sessionDetailsArea
 			uiLayout.sessionDetails.Min.Y += compactHeaderHeight // adjust for header
 			// Add one line gap between header and main content
