@@ -367,8 +367,6 @@ func TestPruneExcessImages_AllImagesPrunable(t *testing.T) {
 // (DB messages → preparePrompt → pruneExcessImages) produces a history that
 // stays within the provider's image limit.
 func TestPruneExcessImages_DBPipeline_ExceedsLimit(t *testing.T) {
-	t.Parallel()
-
 	env := testEnv(t)
 	agent := &sessionAgent{
 		messages: env.messages,
@@ -444,8 +442,6 @@ func TestPruneExcessImages_DBPipeline_ExceedsLimit(t *testing.T) {
 // TestPruneExcessImages_DBPipeline_UnderLimit verifies that when images are
 // within the limit, nothing is modified.
 func TestPruneExcessImages_DBPipeline_UnderLimit(t *testing.T) {
-	t.Parallel()
-
 	env := testEnv(t)
 	agent := &sessionAgent{
 		messages: env.messages,
@@ -493,8 +489,6 @@ func TestPruneExcessImages_DBPipeline_UnderLimit(t *testing.T) {
 // fix: even after images exceed the limit, a text-only follow-up message
 // can still be sent because pruning brings the count back within bounds.
 func TestPruneExcessImages_DBPipeline_TextOnlyAfterLimit(t *testing.T) {
-	t.Parallel()
-
 	env := testEnv(t)
 	agent := &sessionAgent{
 		messages: env.messages,
@@ -573,9 +567,11 @@ func (m *geminiMockModel) Model() string    { return "gemini-3.1-pro-preview" }
 func (m *geminiMockModel) Generate(_ context.Context, _ fantasy.Call) (*fantasy.Response, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (m *geminiMockModel) GenerateObject(_ context.Context, _ fantasy.ObjectCall) (*fantasy.ObjectResponse, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (m *geminiMockModel) StreamObject(_ context.Context, _ fantasy.ObjectCall) (fantasy.ObjectStreamResponse, error) {
 	return nil, fmt.Errorf("not implemented")
 }
@@ -622,8 +618,6 @@ func (m *geminiMockModel) Stream(_ context.Context, call fantasy.Call) (fantasy.
 //  2. The agent call succeeds instead of returning "too many images"
 //  3. After exceeding the limit, the session is still usable for new messages
 func TestE2E_SessionAgentRun_PrunesImagesBeforeProvider(t *testing.T) {
-	t.Parallel()
-
 	env := testEnv(t)
 	mock := &geminiMockModel{maxImages: 10}
 
