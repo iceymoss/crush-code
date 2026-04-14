@@ -347,9 +347,14 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	// 事件流监听与流式输出:
 	// 订阅系统消息事件，用来捕捉 AI 实时生成的一字一句
 	messageEvents := app.Messages.Subscribe(ctx)
+
+	// 记录每条消息已经打印了多少个字节，防止重复打印
 	messageReadBytes := make(map[string]int)
+
+	// 记录是否已经开始打印有效内容
 	var printed bool
 
+	// 退出时的清理工作
 	defer func() {
 		if progress && stderrTTY {
 			_, _ = fmt.Fprintf(os.Stderr, ansi.ResetProgressBar)
@@ -357,37 +362,45 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 
 		// Always print a newline at the end. If output is a TTY this will
 		// prevent the prompt from overwriting the last line of output.
+		// 打印一个换行符，防止最后一行输出和用户的终端提示符挤在一起
 		_, _ = fmt.Fprintln(output)
 	}()
 
+	// 主循环：持续监听事件，直到收到退出信号或发生错误
 	for {
 		if progress && stderrTTY {
-			// HACK: Reinitialize the terminal progress bar on every iteration
-			// so it doesn't get hidden by the terminal due to inactivity.
+			// Hack 技巧：不断重置终端的不确定进度条，防止它因为终端静止而被隐藏
 			_, _ = fmt.Fprintf(os.Stderr, ansi.SetIndeterminateProgressBar)
 		}
 
 		select {
-		case result := <-done:
+		case result := <-done: // 收到AI代理执行结果
+			// 停止加载动画
 			stopSpinner()
+			// 如果执行失败，则返回错误
 			if result.err != nil {
+				// 如果执行被取消，则返回nil
 				if errors.Is(result.err, context.Canceled) || errors.Is(result.err, agent.ErrRequestCancelled) {
 					slog.Debug("Non-interactive: agent processing cancelled", "session_id", sess.ID)
 					return nil
 				}
 				return fmt.Errorf("agent processing failed: %w", result.err)
 			}
+			// 如果执行成功，则返回nil
 			return nil
 
-		case event := <-messageEvents:
-			msg := event.Payload
+		case event := <-messageEvents: // 收到 AI 的流式消息更新
+			msg := event.Payload // 获取消息内容
 			if msg.SessionID == sess.ID && msg.Role == message.Assistant && len(msg.Parts) > 0 {
+				// 停止加载动画
 				stopSpinner()
 
-				content := msg.Content().String()
-				readBytes := messageReadBytes[msg.ID]
+				content := msg.Content().String()     // 获取消息内容
+				readBytes := messageReadBytes[msg.ID] // 获取消息已经打印了多少个字节
 
+				// 如果消息内容长度小于已经打印的字节数，则返回错误
 				if len(content) < readBytes {
+					// 记录错误日志
 					slog.Error("Non-interactive: message content is shorter than read bytes", "message_length", len(content), "read_bytes", readBytes)
 					return fmt.Errorf("message content is shorter than read bytes: %d < %d", len(content), readBytes)
 				}
