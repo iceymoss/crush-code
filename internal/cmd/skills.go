@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/tree"
@@ -164,15 +165,18 @@ func outputSkillsTree(cmd *cobra.Command, all []*skills.Skill, disabledSet map[s
 }
 
 func outputSkillsFlat(cmd *cobra.Command, all []*skills.Skill, disabledSet map[string]bool, projectDirs []string) error {
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	for _, s := range all {
 		src := skills.ClassifySource(s, projectDirs)
 		status := "enabled"
 		if disabledSet[s.Name] {
 			status = "disabled"
 		}
-		cmd.Printf("%s\t%s\t%s\n", s.Name, strings.ToLower(string(src)), status)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, strings.ToLower(string(src)), status); err != nil {
+			return err
+		}
 	}
-	return nil
+	return w.Flush()
 }
 
 type skillJSON struct {

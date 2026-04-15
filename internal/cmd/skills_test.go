@@ -124,6 +124,39 @@ func TestOutputSkillsFlat(t *testing.T) {
 	require.Contains(t, lines[1], "disabled")
 }
 
+func TestOutputSkillsFlatAlignment(t *testing.T) {
+	t.Parallel()
+
+	all := []*skills.Skill{
+		{Name: "crush-config", Builtin: true, Path: "crush://skills/crush-config"},
+		{Name: "slack-gif-creator", Builtin: false, Path: "/home/user/.config/crush/skills/slack-gif-creator"},
+		{Name: "pdf", Builtin: false, Path: "/work/.crush/skills/pdf"},
+	}
+	disabledSet := map[string]bool{}
+	projectDirs := []string{"/work/.crush/skills"}
+
+	cmd := newTestCmd()
+	err := outputSkillsFlat(cmd, all, disabledSet, projectDirs)
+	require.NoError(t, err)
+
+	output := cmdOutput(cmd)
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	require.Len(t, lines, 3)
+
+	// All source columns should start at the same position (aligned by tabwriter).
+	sourceCol := strings.Index(lines[0], "builtin")
+	require.Greater(t, sourceCol, 0, "source column should be present")
+	require.Equal(t, sourceCol, strings.Index(lines[1], "user"), "source columns should be aligned")
+	require.Equal(t, sourceCol, strings.Index(lines[2], "project"), "source columns should be aligned")
+
+	// All status columns should also be aligned.
+	statusCol0 := strings.Index(lines[0], "enabled")
+	statusCol1 := strings.Index(lines[1], "enabled")
+	statusCol2 := strings.Index(lines[2], "enabled")
+	require.Equal(t, statusCol0, statusCol1, "status columns should be aligned")
+	require.Equal(t, statusCol0, statusCol2, "status columns should be aligned")
+}
+
 func TestOutputSkillsTree(t *testing.T) {
 	t.Parallel()
 
