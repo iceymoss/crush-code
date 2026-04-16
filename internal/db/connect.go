@@ -31,7 +31,6 @@ func init() {
 	if testing.Testing() {
 		goose.SetLogger(goose.NopLogger())
 	}
-
 }
 
 // Connect opens a SQLite database connection and runs migrations.
