@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -21,6 +22,18 @@ var pragmas = map[string]string{
 	"busy_timeout":  "30000",
 }
 
+//go:embed migrations/*.sql
+var FS embed.FS
+
+func init() {
+	goose.SetBaseFS(FS)
+
+	if testing.Testing() {
+		goose.SetLogger(goose.NopLogger())
+	}
+
+}
+
 // Connect opens a SQLite database connection and runs migrations.
 func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 	if dataDir == "" {
@@ -36,12 +49,6 @@ func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 	if err = db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	goose.SetBaseFS(FS)
-
-	if testing.Testing() {
-		goose.SetLogger(goose.NopLogger())
 	}
 
 	if err := goose.SetDialect("sqlite3"); err != nil {
