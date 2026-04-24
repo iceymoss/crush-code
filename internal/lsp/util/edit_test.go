@@ -12,12 +12,16 @@ import (
 )
 
 func TestNormalizeURIPath(t *testing.T) {
+	t.Parallel()
+
 	t.Run("normalizes slash-separated paths", func(t *testing.T) {
+		t.Parallel()
 		got := normalizeURIPath("foo/bar/baz.txt")
 		require.Equal(t, filepath.Clean(filepath.FromSlash("foo/bar/baz.txt")), got)
 	})
 
 	t.Run("windows drive URI path", func(t *testing.T) {
+		t.Parallel()
 		if runtime.GOOS != "windows" {
 			t.Skip("windows-only normalization behavior")
 		}
@@ -394,6 +398,8 @@ func TestRangesOverlap(t *testing.T) {
 }
 
 func TestApplyWorkspaceEdit_BoundaryEnforcement(t *testing.T) {
+	t.Parallel()
+
 	t.Run("allows edits inside workspace", func(t *testing.T) {
 		t.Parallel()
 		workspace := t.TempDir()
