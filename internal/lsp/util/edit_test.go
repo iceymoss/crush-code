@@ -378,17 +378,12 @@ func TestRangesOverlap(t *testing.T) {
 }
 
 func TestApplyWorkspaceEdit_BoundaryEnforcement(t *testing.T) {
-	t.Parallel()
-
-	workspace := t.TempDir()
-	insideFile := filepath.Join(workspace, "inside.txt")
-	require.NoError(t, os.WriteFile(insideFile, []byte("hello"), 0o644))
-
-	outsideDir := t.TempDir()
-	outsideFile := filepath.Join(outsideDir, "outside.txt")
-	require.NoError(t, os.WriteFile(outsideFile, []byte("outside"), 0o644))
-
 	t.Run("allows edits inside workspace", func(t *testing.T) {
+		t.Parallel()
+		workspace := t.TempDir()
+		insideFile := filepath.Join(workspace, "inside.txt")
+		require.NoError(t, os.WriteFile(insideFile, []byte("hello"), 0o644))
+
 		edit := protocol.WorkspaceEdit{
 			Changes: map[protocol.DocumentURI][]protocol.TextEdit{
 				protocol.URIFromPath(insideFile): {
@@ -412,6 +407,12 @@ func TestApplyWorkspaceEdit_BoundaryEnforcement(t *testing.T) {
 	})
 
 	t.Run("rejects text edits outside workspace", func(t *testing.T) {
+		t.Parallel()
+		workspace := t.TempDir()
+		outsideDir := t.TempDir()
+		outsideFile := filepath.Join(outsideDir, "outside.txt")
+		require.NoError(t, os.WriteFile(outsideFile, []byte("outside"), 0o644))
+
 		edit := protocol.WorkspaceEdit{
 			Changes: map[protocol.DocumentURI][]protocol.TextEdit{
 				protocol.URIFromPath(outsideFile): {
@@ -432,6 +433,10 @@ func TestApplyWorkspaceEdit_BoundaryEnforcement(t *testing.T) {
 	})
 
 	t.Run("rejects recursive delete outside workspace", func(t *testing.T) {
+		t.Parallel()
+		workspace := t.TempDir()
+		outsideDir := t.TempDir()
+
 		edit := protocol.WorkspaceEdit{
 			DocumentChanges: []protocol.DocumentChange{
 				{
@@ -453,6 +458,9 @@ func TestApplyWorkspaceEdit_BoundaryEnforcement(t *testing.T) {
 	})
 
 	t.Run("rejects rename when target outside workspace", func(t *testing.T) {
+		t.Parallel()
+		workspace := t.TempDir()
+		outsideDir := t.TempDir()
 		renameSource := filepath.Join(workspace, "rename.txt")
 		require.NoError(t, os.WriteFile(renameSource, []byte("rename"), 0o644))
 
