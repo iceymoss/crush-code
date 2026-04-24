@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -13,11 +14,31 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
+func normalizeURIPath(path string) string {
+	// On Windows, LSP URIs often decode to "/C:/path/to/file".
+	// filepath treats this as a relative path and filepath.Abs may produce
+	// "D:\\C:\\..." depending on current drive. Strip the leading slash so
+	// it becomes a valid absolute Windows path.
+	if runtime.GOOS == "windows" &&
+		len(path) >= 4 &&
+		path[0] == '/' &&
+		((path[1] >= 'A' && path[1] <= 'Z') || (path[1] >= 'a' && path[1] <= 'z')) &&
+		path[2] == ':' &&
+		path[3] == '/' {
+		path = path[1:]
+	}
+	return filepath.Clean(filepath.FromSlash(path))
+}
+
 func validateWorkspacePath(uri protocol.DocumentURI, workspaceRoot string) (string, error) {
 	path, err := uri.Path()
 	if err != nil {
 		return "", fmt.Errorf("invalid URI: %w", err)
 	}
+	path = normalizeURIPath(path)
+
+	workspaceRoot = normalizeURIPath(workspaceRoot)
+
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve absolute path: %w", err)

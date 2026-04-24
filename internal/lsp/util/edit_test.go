@@ -3,12 +3,28 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	powernap "github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNormalizeURIPath(t *testing.T) {
+	t.Run("normalizes slash-separated paths", func(t *testing.T) {
+		got := normalizeURIPath("foo/bar/baz.txt")
+		require.Equal(t, filepath.Clean(filepath.FromSlash("foo/bar/baz.txt")), got)
+	})
+
+	t.Run("windows drive URI path", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("windows-only normalization behavior")
+		}
+		got := normalizeURIPath("/C:/Users/test/file.txt")
+		require.Equal(t, filepath.Clean(`C:\Users\test\file.txt`), got)
+	})
+}
 
 func TestPositionToByteOffset(t *testing.T) {
 	tests := []struct {
