@@ -67,49 +67,29 @@ func assistantMsg(text string) fantasy.Message {
 	}
 }
 
-// --- maxImagesForProvider ---
+// --- maxImagesForModel ---
 
-func TestMaxImagesForProvider_Gemini(t *testing.T) {
+func TestMaxImagesForModel_Gemini(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 10, maxImagesForProvider(geminiModel()))
+	assert.Equal(t, 10, maxImagesForModel(geminiModel()))
 }
 
-func TestMaxImagesForProvider_VertexAI(t *testing.T) {
+func TestMaxImagesForModel_VertexAI(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 10, maxImagesForProvider(vertexModel()))
+	assert.Equal(t, 10, maxImagesForModel(vertexModel()))
 }
 
-func TestMaxImagesForProvider_Anthropic(t *testing.T) {
+func TestMaxImagesForModel_Anthropic(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 0, maxImagesForProvider(anthropicModel()))
+	assert.Equal(t, 0, maxImagesForModel(anthropicModel()))
 }
 
-func TestMaxImagesForProvider_OpenAI(t *testing.T) {
+func TestMaxImagesForModel_OpenAI(t *testing.T) {
 	t.Parallel()
 	m := Model{
 		ModelCfg: config.SelectedModel{Provider: string(catwalk.InferenceProviderOpenAI)},
 	}
-	assert.Equal(t, 0, maxImagesForProvider(m))
-}
-
-func TestMaxImagesForProvider_ConfigOverride(t *testing.T) {
-	t.Parallel()
-	// User sets max_images: 20 in crush.json → overrides the Gemini default of 10.
-	m := Model{
-		CatwalkCfg: catwalk.Model{SupportsImages: true},
-		ModelCfg:   config.SelectedModel{Provider: string(catwalk.InferenceProviderGemini), MaxImages: 20},
-	}
-	assert.Equal(t, 20, maxImagesForProvider(m))
-}
-
-func TestMaxImagesForProvider_ConfigOverrideOnUnlimitedProvider(t *testing.T) {
-	t.Parallel()
-	// User sets max_images on a provider that has no default limit.
-	m := Model{
-		CatwalkCfg: catwalk.Model{SupportsImages: true},
-		ModelCfg:   config.SelectedModel{Provider: string(catwalk.InferenceProviderOpenAI), MaxImages: 15},
-	}
-	assert.Equal(t, 15, maxImagesForProvider(m))
+	assert.Equal(t, 0, maxImagesForModel(m))
 }
 
 // --- isImageFilePart ---
@@ -225,17 +205,19 @@ func TestPruneExcessImages_OverLimit_PrunesOldest(t *testing.T) {
 	// Should now have exactly 10 images (12 - 2 = 10)
 	assert.Equal(t, 10, countImagesInMessages(result))
 
-	// The oldest 2 images should be replaced with text placeholders.
-	// First user message had 2 images, both should be replaced.
+	// The oldest 2 images should be replaced with text placeholders
+	// that include the original filename.
 	firstUser := result[0]
 	require.Len(t, firstUser.Content, 3) // text + 2 placeholders
 	tp, ok := fantasy.AsMessagePart[fantasy.TextPart](firstUser.Content[1])
 	require.True(t, ok)
-	assert.Contains(t, tp.Text, "removed")
+	assert.Contains(t, tp.Text, "old-1.png")
+	assert.Contains(t, tp.Text, "removed to stay within model limits")
 
 	tp2, ok := fantasy.AsMessagePart[fantasy.TextPart](firstUser.Content[2])
 	require.True(t, ok)
-	assert.Contains(t, tp2.Text, "removed")
+	assert.Contains(t, tp2.Text, "old-2.png")
+	assert.Contains(t, tp2.Text, "removed to stay within model limits")
 
 	// The newest images should still be present
 	lastUser := result[len(result)-1]
@@ -350,7 +332,7 @@ func TestPruneExcessImages_AllImagesPrunable(t *testing.T) {
 	for _, msg := range result {
 		for _, part := range msg.Content {
 			if tp, ok := fantasy.AsMessagePart[fantasy.TextPart](part); ok {
-				if tp.Text == "[Earlier image removed to stay within model limits]" {
+				if strings.Contains(tp.Text, "removed to stay within model limits") {
 					pruned++
 				}
 			}
@@ -420,7 +402,7 @@ func TestPruneExcessImages_DBPipeline_ExceedsLimit(t *testing.T) {
 	for _, msg := range pruned {
 		for _, part := range msg.Content {
 			if tp, ok := fantasy.AsMessagePart[fantasy.TextPart](part); ok {
-				if tp.Text == "[Earlier image removed to stay within model limits]" {
+				if strings.Contains(tp.Text, "removed to stay within model limits") {
 					placeholders++
 				}
 			}

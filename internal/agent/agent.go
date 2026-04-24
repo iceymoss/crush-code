@@ -1203,23 +1203,19 @@ func (a *sessionAgent) workaroundProviderMediaLimitations(messages []fantasy.Mes
 	return convertedMessages
 }
 
-// defaultMaxImages maps providers to their known per-request image limits.
-// Providers not listed here have no known hard limit (handled via context
-// window limits instead).
-var defaultMaxImages = map[catwalk.InferenceProvider]int{
-	catwalk.InferenceProviderGemini:   10,
-	catwalk.InferenceProviderVertexAI: 10,
-}
-
-// maxImagesForProvider returns the maximum number of images allowed in a
-// single request. It checks the user-configured MaxImages first (from
-// crush.json), then falls back to the provider's known default.
-// Returns 0 if there is no limit.
-func maxImagesForProvider(model Model) int {
-	if model.ModelCfg.MaxImages > 0 {
-		return model.ModelCfg.MaxImages
+// maxImagesForModel returns the per-request image limit for the given model.
+// Only providers known to enforce a hard limit are listed; others return 0
+// (unlimited), relying on context window limits instead.
+//
+// TODO: Replace this with catwalk.Model.MaxAttachments once Catwalk exposes
+// per-model attachment limits. See https://github.com/charmbracelet/catwalk.
+func maxImagesForModel(model Model) int {
+	switch catwalk.InferenceProvider(model.ModelCfg.Provider) {
+	case catwalk.InferenceProviderGemini, catwalk.InferenceProviderVertexAI:
+		return 10
+	default:
+		return 0
 	}
-	return defaultMaxImages[catwalk.InferenceProvider(model.ModelCfg.Provider)]
 }
 
 // isImageFilePart reports whether the message part is a FilePart whose media
@@ -1261,7 +1257,7 @@ func countImagesInMessages(messages []fantasy.Message) int {
 // text placeholder) so the request stays within bounds. Only the sent history
 // is modified; the persisted messages in the database are untouched.
 func pruneExcessImages(messages []fantasy.Message, model Model) []fantasy.Message {
-	maxImages := maxImagesForProvider(model)
+	maxImages := maxImagesForModel(model)
 	if maxImages <= 0 {
 		return messages
 	}
@@ -1283,9 +1279,13 @@ func pruneExcessImages(messages []fantasy.Message, model Model) []fantasy.Messag
 
 		newParts := make([]fantasy.MessagePart, 0, len(msg.Content))
 		for _, part := range msg.Content {
-			if _, ok := isImageFilePart(part); ok && removed < toRemove {
+			if fp, ok := isImageFilePart(part); ok && removed < toRemove {
+				name := fp.Filename
+				if name == "" {
+					name = "image"
+				}
 				newParts = append(newParts, fantasy.TextPart{
-					Text: "[Earlier image removed to stay within model limits]",
+					Text: fmt.Sprintf("[Earlier image %q removed to stay within model limits]", name),
 				})
 				removed++
 				continue
