@@ -4,17 +4,38 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/crush/internal/fsext"
 	powernap "github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
-func applyTextEdits(uri protocol.DocumentURI, edits []protocol.TextEdit, encoding powernap.OffsetEncoding) error {
+func validateWorkspacePath(uri protocol.DocumentURI, workspaceRoot string) (string, error) {
 	path, err := uri.Path()
 	if err != nil {
-		return fmt.Errorf("invalid URI: %w", err)
+		return "", fmt.Errorf("invalid URI: %w", err)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path: %w", err)
+	}
+	root, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace root: %w", err)
+	}
+	if !fsext.HasPrefix(absPath, root) {
+		return "", fmt.Errorf("path %q is outside workspace root %q", absPath, root)
+	}
+	return absPath, nil
+}
+
+func applyTextEdits(uri protocol.DocumentURI, edits []protocol.TextEdit, encoding powernap.OffsetEncoding, workspaceRoot string) error {
+	path, err := validateWorkspacePath(uri, workspaceRoot)
+	if err != nil {
+		return err
 	}
 
 	// Read the file content
@@ -168,11 +189,11 @@ func applyTextEdit(lines []string, edit protocol.TextEdit, encoding powernap.Off
 }
 
 // applyDocumentChange applies a DocumentChange (create/rename/delete operations)
-func applyDocumentChange(change protocol.DocumentChange, encoding powernap.OffsetEncoding) error {
+func applyDocumentChange(change protocol.DocumentChange, encoding powernap.OffsetEncoding, workspaceRoot string) error {
 	if change.CreateFile != nil {
-		path, err := change.CreateFile.URI.Path()
+		path, err := validateWorkspacePath(change.CreateFile.URI, workspaceRoot)
 		if err != nil {
-			return fmt.Errorf("invalid URI: %w", err)
+			return err
 		}
 
 		if change.CreateFile.Options != nil {
@@ -190,9 +211,9 @@ func applyDocumentChange(change protocol.DocumentChange, encoding powernap.Offse
 	}
 
 	if change.DeleteFile != nil {
-		path, err := change.DeleteFile.URI.Path()
+		path, err := validateWorkspacePath(change.DeleteFile.URI, workspaceRoot)
 		if err != nil {
-			return fmt.Errorf("invalid URI: %w", err)
+			return err
 		}
 
 		if change.DeleteFile.Options != nil && change.DeleteFile.Options.Recursive {
@@ -210,12 +231,12 @@ func applyDocumentChange(change protocol.DocumentChange, encoding powernap.Offse
 		var newPath, oldPath string
 		var err error
 
-		oldPath, err = change.RenameFile.OldURI.Path()
+		oldPath, err = validateWorkspacePath(change.RenameFile.OldURI, workspaceRoot)
 		if err != nil {
 			return err
 		}
 
-		newPath, err = change.RenameFile.NewURI.Path()
+		newPath, err = validateWorkspacePath(change.RenameFile.NewURI, workspaceRoot)
 		if err != nil {
 			return err
 		}
@@ -241,7 +262,7 @@ func applyDocumentChange(change protocol.DocumentChange, encoding powernap.Offse
 				return fmt.Errorf("invalid edit type: %w", err)
 			}
 		}
-		return applyTextEdits(change.TextDocumentEdit.TextDocument.URI, textEdits, encoding)
+		return applyTextEdits(change.TextDocumentEdit.TextDocument.URI, textEdits, encoding, workspaceRoot)
 	}
 
 	return nil
@@ -266,17 +287,17 @@ func utf32ToByteOffset(lineText string, codepointOffset uint32) int {
 // ApplyWorkspaceEdit applies the given WorkspaceEdit to the filesystem.
 // The encoding parameter specifies the position encoding used by the LSP server
 // (UTF8, UTF16, or UTF32). This affects how character offsets are interpreted.
-func ApplyWorkspaceEdit(edit protocol.WorkspaceEdit, encoding powernap.OffsetEncoding) error {
+func ApplyWorkspaceEdit(edit protocol.WorkspaceEdit, encoding powernap.OffsetEncoding, workspaceRoot string) error {
 	// Handle Changes field
 	for uri, textEdits := range edit.Changes {
-		if err := applyTextEdits(uri, textEdits, encoding); err != nil {
+		if err := applyTextEdits(uri, textEdits, encoding, workspaceRoot); err != nil {
 			return fmt.Errorf("failed to apply text edits: %w", err)
 		}
 	}
 
 	// Handle DocumentChanges field
 	for _, change := range edit.DocumentChanges {
-		if err := applyDocumentChange(change, encoding); err != nil {
+		if err := applyDocumentChange(change, encoding, workspaceRoot); err != nil {
 			return fmt.Errorf("failed to apply document change: %w", err)
 		}
 	}
