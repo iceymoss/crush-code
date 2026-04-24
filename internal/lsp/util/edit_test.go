@@ -20,12 +20,21 @@ func TestNormalizeURIPath(t *testing.T) {
 		require.Equal(t, filepath.Clean(filepath.FromSlash("foo/bar/baz.txt")), got)
 	})
 
-	t.Run("windows drive URI path", func(t *testing.T) {
+	t.Run("windows drive URI path forward slash", func(t *testing.T) {
 		t.Parallel()
 		if runtime.GOOS != "windows" {
 			t.Skip("windows-only normalization behavior")
 		}
 		got := normalizeURIPath("/C:/Users/test/file.txt")
+		require.Equal(t, filepath.Clean(`C:\Users\test\file.txt`), got)
+	})
+
+	t.Run("windows drive URI path backslash", func(t *testing.T) {
+		t.Parallel()
+		if runtime.GOOS != "windows" {
+			t.Skip("windows-only normalization behavior")
+		}
+		got := normalizeURIPath(`\C:\Users\test\file.txt`)
 		require.Equal(t, filepath.Clean(`C:\Users\test\file.txt`), got)
 	})
 }

@@ -15,19 +15,24 @@ import (
 )
 
 func normalizeURIPath(path string) string {
-	// On Windows, LSP URIs often decode to "/C:/path/to/file".
-	// filepath treats this as a relative path and filepath.Abs may produce
-	// "D:\\C:\\..." depending on current drive. Strip the leading slash so
-	// it becomes a valid absolute Windows path.
-	if runtime.GOOS == "windows" &&
-		len(path) >= 4 &&
-		path[0] == '/' &&
+	if runtime.GOOS != "windows" {
+		return filepath.Clean(filepath.FromSlash(path))
+	}
+
+	// On Windows, LSP DocumentURI.Path() returns paths such as
+	// "\C:\Users\..." or "/C:/Users/..." (a leading separator before the
+	// drive letter). filepath.Abs treats those as relative and prefixes the
+	// current drive, producing "D:\C:\Users\...". Strip the leading
+	// separator so the path starts with a drive letter.
+	path = filepath.FromSlash(path)
+	if len(path) >= 4 &&
+		(path[0] == '\\' || path[0] == '/') &&
 		((path[1] >= 'A' && path[1] <= 'Z') || (path[1] >= 'a' && path[1] <= 'z')) &&
 		path[2] == ':' &&
-		path[3] == '/' {
+		(path[3] == '\\' || path[3] == '/') {
 		path = path[1:]
 	}
-	return filepath.Clean(filepath.FromSlash(path))
+	return filepath.Clean(path)
 }
 
 func validateWorkspacePath(uri protocol.DocumentURI, workspaceRoot string) (string, error) {
