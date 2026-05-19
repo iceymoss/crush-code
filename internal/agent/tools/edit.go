@@ -288,7 +288,11 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Check if file exists in history
+	// Check if file exists in history. When there is no prior record for
+	// this (session, path), Create seeds the initial version with
+	// oldContent, so there is no separate intermediate version to record.
+	// The else-if guard prevents inserting a duplicate of oldContent when
+	// we just created it.
 	file, err := edit.files.GetByPathAndSession(edit.ctx, filePath, sessionID)
 	if err != nil {
 		_, err = edit.files.Create(edit.ctx, sessionID, filePath, oldContent)
@@ -296,8 +300,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 			// Log error but don't fail the operation
 			return fantasy.ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
 		}
-	}
-	if file.Content != oldContent {
+	} else if file.Content != oldContent {
 		// User manually changed the content; store an intermediate version
 		_, err = edit.files.CreateVersion(edit.ctx, sessionID, filePath, oldContent)
 		if err != nil {
@@ -422,7 +425,11 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Check if file exists in history
+	// Check if file exists in history. When there is no prior record for
+	// this (session, path), Create seeds the initial version with
+	// oldContent, so there is no separate intermediate version to record.
+	// The else-if guard prevents inserting a duplicate of oldContent when
+	// we just created it.
 	file, err := edit.files.GetByPathAndSession(edit.ctx, filePath, sessionID)
 	if err != nil {
 		_, err = edit.files.Create(edit.ctx, sessionID, filePath, oldContent)
@@ -430,8 +437,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			// Log error but don't fail the operation
 			return fantasy.ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
 		}
-	}
-	if file.Content != oldContent {
+	} else if file.Content != oldContent {
 		// User manually changed the content; store an intermediate version
 		_, err = edit.files.CreateVersion(edit.ctx, sessionID, filePath, oldContent)
 		if err != nil {
